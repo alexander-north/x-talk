@@ -220,11 +220,11 @@ fn enabled(s: &Sounds, event: &str) -> bool {
 }
 fn duration(event: &str) -> Duration {
     Duration::from_millis(match event {
-        "started" => 350,
+        "started" => 400,
         "stopped" => 330,
         "canceled" => 320,
-        "transcribed" => 400,
-        "transformed" => 440,
+        "transcribed" => 440,
+        "transformed" => 350,
         _ => 0,
     })
 }
@@ -268,9 +268,9 @@ mod tests {
         assert_eq!(s.next(t).unwrap().event, "transcribed");
         s.until = Some(t + duration("transcribed"));
         assert!(s.enqueue("transformed", false, Some(0), t));
-        assert!(s.next(t + Duration::from_millis(399)).is_none());
+        assert!(s.next(t + Duration::from_millis(439)).is_none());
         assert_eq!(
-            s.next(t + Duration::from_millis(400)).unwrap().event,
+            s.next(t + Duration::from_millis(440)).unwrap().event,
             "transformed"
         );
     }

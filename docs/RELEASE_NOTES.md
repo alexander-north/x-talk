@@ -1,14 +1,8 @@
-# x-talk: live words and a simpler recording workspace
+# Easier copying and clearer sound cues
 
-ElevenLabs now offers an optional real-time recording mode. See words appear while you speak, then press Stop to finish the transcript and run any enabled cleanup. After-recording transcription remains the default; imports and retries still use batch transcription. Real-time mode sends microphone audio to ElevenLabs while recording, and provider charges apply.
+Click anywhere on the front transcript or transformed card to copy the complete text. The taller cards keep the final lines visible with a leading ellipsis instead of a scrollbar, and transformed text is smaller. Click the exposed rear card to switch outputs.
 
-The recorder has animated glass controls, a live microphone spectrum, and overlapping transcript and cleaned-up text cards. Compact mode keeps the controls close without taking over your screen, and reduced-motion settings use static visuals.
-
-Transcripts now copy to the clipboard as soon as transcription finishes, even with transformation enabled. Paste immediately for the raw text, or wait for transformation to replace it. Each stage has its own copy toggle; imports, retries, and resumed jobs still require manual copying.
-
-This release includes in-app updates and a simpler shortcut editor. You can capture a key combination, enter it manually, or remove it. Toggle recording starts and stops; Cancel discards the active recording.
-
-Under Settings → General, x-talk can check for new versions automatically. You choose when to download, update, and restart. Updates wait until recording and processing finish, verify the installer signature, and preserve your recordings, preferences, and API keys. Older versions need one manual installation to gain the updater.
+Start, transcription, and transformation now use a clearer rising sound progression, with a higher final transformation tone. Stop and Cancel are unchanged; sound settings and previews still apply.
 
 Download the `x-talk_<version>_x64-setup.exe` asset for Windows x64. Add your own provider key under Settings → API Keys; provider usage is billed separately. Installers and signed updates are available from the public GitHub releases.
 

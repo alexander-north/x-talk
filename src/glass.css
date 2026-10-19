@@ -28,17 +28,17 @@
 .record-instruction strong{font-weight:500;font-size:18px;letter-spacing:-.4px}
 .record-instruction[data-phase=recording] strong{font-variant-numeric:tabular-nums;letter-spacing:1px}
 .home-outputs{max-width:760px;padding:0 22px 44px 0}
-.home-outputs .output-card{min-height:145px;border-radius:16px;border-color:var(--line);box-shadow:0 6px 24px var(--shadow);background:linear-gradient(125deg,#ffffff14,transparent),var(--surface)}
+.home-outputs .output-card{min-height:181px;border-radius:16px;border-color:var(--line);box-shadow:0 6px 24px var(--shadow);background:linear-gradient(125deg,#ffffff14,transparent),var(--surface)}
 .output-card .text-heading{padding:15px 20px 3px}
 .output-card .text-heading h2{font-weight:500}
-.home-output{display:grid;align-content:start;height:clamp(110px,18dvh,180px);min-height:0;padding:12px 21px 22px;font-family:"Segoe UI Variable Text","Segoe UI",sans-serif;font-size:16px;line-height:1.7;max-height:none}
-.transformed-card .home-output{font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif;font-size:21px;line-height:1.55;letter-spacing:-.2px}
+.home-output{display:grid;align-content:start;height:clamp(150px,calc(22.5dvh + 12px),238px);min-height:0;padding:12px 21px 22px;font-family:"Segoe UI Variable Text","Segoe UI",sans-serif;font-size:16px;line-height:1.7;max-height:none}
+.transformed-card .home-output{font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif;font-size:16.8px;line-height:1.55;letter-spacing:-.2px}
 .home-output.placeholder{font-size:15px;color:var(--muted)}
 .recorder-footer{padding-top:10px}
 @keyframes star-breathe{0%,100%{transform:scale(1);filter:drop-shadow(0 0 4px #fff4c0)}50%{transform:scale(2);filter:drop-shadow(0 0 13px #fff4c099)}}
 @keyframes check-breathe{0%,100%{transform:scale(1);opacity:.88}50%{transform:scale(1.07);opacity:1}}
 @media(max-height:730px){.recording-home{--orb-size:172px}.home-output{max-height:none}}
-@media(max-width:700px){.recording-home{--orb-size:166px;padding-left:22px;padding-right:22px}.home-output{font-size:15px}.transformed-card .home-output{font-size:18px}}
+@media(max-width:700px){.recording-home{--orb-size:166px;padding-left:22px;padding-right:22px}.home-output{font-size:15px}.transformed-card .home-output{font-size:14.4px}}
 .compact .recording-home{--orb-size:142px;gap:19px;padding:30px 20px 14px;justify-content:safe center}
 .compact .recording-focus{gap:0;padding:0 0 calc(var(--orb-size)*.44 + 16px)}
 .compact .record-orbit{margin:0}
@@ -66,3 +66,20 @@
 .home-outputs .transformed-card{animation:none}
 @media(max-width:700px){.home-outputs{padding:0 16px 42px 0}}
 @media(prefers-reduced-motion:reduce){.glyph-layer,.home-outputs .output-card,.home-outputs .home-output{transition:none}}
+
+/* A single keyboard-accessible action covers the card; rear cards only swap. */
+.home-outputs .home-output{overflow:hidden;user-select:none;cursor:inherit}
+.home-output>span{display:block;align-self:start;overflow-wrap:anywhere;white-space:pre-wrap}
+.card-action{border-radius:16px;cursor:pointer}
+.card-action:disabled{cursor:default}
+.card-copy-hint{display:inline-flex;align-items:center;justify-content:center;width:25px;height:27px;color:var(--muted)}
+
+@media(max-height:650px){
+ .app:not(.compact) .recording-home{--orb-size:120px;padding-top:18px;gap:12px}
+ .app:not(.compact) .recording-home .recording-focus{padding-bottom:40px}
+ .home-outputs .output-card{min-height:0}
+ .home-outputs .home-output{height:clamp(68px,calc(100dvh - 330px),150px)}
+}
+
+@media(min-height:651px) and (max-height:730px){.app:not(.compact) .recording-home{padding-top:max(18px,calc(24dvh - var(--orb-size)/2))}}
+@media(max-height:430px){.app:not(.compact) .recording-home{--orb-size:80px}.app:not(.compact) .recording-home .recording-focus{padding-bottom:25px}.app:not(.compact) .glass-orb .orb-symbol svg{width:56px;height:56px}}
