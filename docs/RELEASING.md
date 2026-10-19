@@ -21,7 +21,17 @@ The workflow uses GitHub's built-in token. Prepare/publish jobs receive contents
 
 Only a main **push** publishes. Pushing a tag or manually dispatching checks does not publish a new release. Diagnostic artifact reuse is for investigating tests, not releasing new application code. Investigate a failed publication before retrying; check whether a release and its complete assets already exist.
 
-Documentation-only commits on top of verified application code may explicitly use `[skip ci]` after checking the diff and documentation. Such commits create no installer; the previous release remains current. Never use this exception for unverified application or packaging changes.
+With the main-branch ruleset enabled, documentation-only pull requests must also pass required CI. Do not use `[skip ci]`: it leaves required checks pending and prevents merging. Merging to main still triggers the normal release workflow.
+
+### Main-branch protection
+
+Import [main.ruleset.json](../.github/rulesets/main.ruleset.json) through GitHub **Settings → Rules → Rulesets → New ruleset → Import a ruleset**, review it, and save. The file is configured as Active; committing it does not enable protection by itself.
+
+The ruleset targets `main`, blocks deletion and force-pushes, requires a pull request with resolved review conversations, and requires an up-to-date branch with passing `prepare`, `media`, `windows`, and `desktop` checks from GitHub Actions. All four checks are required so an upstream failure cannot be hidden by a skipped downstream job. `release` is intentionally excluded because it runs only after a main push.
+
+There are no bypass actors. Required approvals are zero so a solo maintainer can merge their own pull requests; another person's approval, code-owner review, and last-push approval are not required. Signed commits, linear history, and a merge queue are not required. Existing merge methods remain available. If another regular maintainer joins, consider requiring one approval.
+
+This ruleset does not target release tags, so CI can continue creating version tags. The release workflow does not push commits to main. Keep required check names aligned with the workflow if jobs are renamed. An administrator can edit or disable the ruleset for recovery; normal contributions follow the same rules for everyone. See [GitHub's ruleset import instructions](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/managing-rulesets-for-a-repository#importing-a-ruleset).
 
 ### Development versions versus shipped versions
 

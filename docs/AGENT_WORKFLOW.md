@@ -162,7 +162,7 @@ The [Windows workflow](../.github/workflows/windows.yml) separates media compila
 - Artifact-reuse runs cannot create releases. The final main build must complete the full workflow. Do not infer that the source revision of the test harness is the revision compiled into reused binaries.
 - If an explicitly requested diagnostic dispatch duplicates a branch build, cancel only the identified redundant run after confirming which run is needed. Do not cancel another contributor's work or an intended release run.
 - Keep screenshots and logs scoped to synthetic test data. Record the run URL and tested commit, not raw API responses containing credentials.
-- For documentation-only changes on top of a fully verified revision, check the docs and confirm the application diff is empty. Any decision to skip redundant CI must be explicit in the handoff; do not use a skip marker for unverified code changes.
+- For documentation-only changes on top of a fully verified revision, check the docs and confirm the application diff is empty. Local application rebuilds are unnecessary, but the main-branch ruleset still requires hosted PR checks. Do not use a CI skip marker with required checks; it leaves the pull request blocked.
 
 ## Finish and hand off
 

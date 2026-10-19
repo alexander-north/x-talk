@@ -1,6 +1,6 @@
 # x-talk product spec
 
-Status: 1.5 release series, with Windows x64 installers, signed in-app updates, and optional ElevenLabs real-time transcription. Main uses the 1.5.0 development baseline; CI assigns each shipped release its own patch version. The requirements below define intended behavior. Section 11 records dated verification evidence and remaining coverage gaps; earlier candidate results are historical, not claims about every current build. AssemblyAI, Deepgram, and Anthropic live acceptance remains deferred.
+Status: 1.6 release series, with Windows x64 installers, signed in-app updates, and optional ElevenLabs real-time transcription. Main uses the 1.6.0 development baseline; CI assigns each shipped release its own patch version. The requirements below define intended behavior. Section 11 records dated verification evidence and remaining coverage gaps; earlier candidate results are historical, not claims about every current build. AssemblyAI, Deepgram, and Anthropic live acceptance remains deferred.
 
 ## Confirmed planning constraints
 
@@ -43,14 +43,14 @@ The primary workflow is: press a global hotkey, speak, press the hotkey again, a
 - Uploading an existing audio file runs the same transcription and optional transformation flow. Recordings and imports are limited to 60 minutes of original audio, measured before silence removal. Accepted formats and file-size limits are defined in the implementation plan.
 - Produce a single transcript without diarization, speaker labels, or per-speaker channels.
 - The first release supports English speech, with no translation stage. Non-English speech is outside the supported workflow; an English language hint is not a guarantee that such input will be translated into English.
-- A failed job identifies the affected stage, preserves saved work, and allows the next queued job to proceed. Offer manual retry from history. A transformation failure never automatically delivers the raw transcript.
+- A failed job identifies the affected stage, preserves saved work, and allows the next queued job to proceed. Offer manual retry from history. A transformation failure does not trigger a fallback copy; any transcript already copied after transcription remains available.
 - Preserve unfinished jobs across application restarts, but leave them paused until the user explicitly chooses Resume. Paused work does not block fresh recordings or processing. Explicitly resumed jobs append to the active queue, preserving their original relative order and settings snapshots. Resumed jobs save results to history without automatic clipboard copying. Requests interrupted in flight follow the recovery rules below.
 
 Use one native CPAL recording backend; FFmpeg handles media preparation and playback decoding. Browser recording and alternate recording backends are outside scope. Validate this approach against Windows device support, startup time, memory use, encoding, and packaging in M0.
 
 ## Text delivery and sounds
 
-- Transformation is optional. With transformation disabled, deliver the raw transcript. With transformation enabled, deliver only the transformed output; do not deliver the intermediate raw transcript automatically. Both remain available in history.
+- Transformation is optional. With transformation disabled, only the raw transcript is produced. With transformation enabled, both outputs remain available in history; automatic copying follows the independent stage toggles below.
 - Raw and transformed output each have an independent automatic copy-to-clipboard toggle. Copy each enabled stage after saving it: raw transcription first, then transformed text when ready. A disabled stage leaves the clipboard untouched.
 - Automatic clipboard copying applies only to the initial processing of a new microphone recording within the current application session. Imports, manually requested retries, and jobs resumed after restart save their results in history without automatic clipboard copying, regardless of the output delivery settings. Their results can be copied explicitly from history.
 - Enabled automatic copying intentionally replaces the current clipboard, even if the user copied something else while processing was underway. Accept this behavior without clipboard-change detection, preservation, or restoration. Saved results remain available through explicit Copy actions.
@@ -515,4 +515,4 @@ Every normal main push creates an immutable version commit/tag using the source 
 
 Updater signatures authenticate installation bytes and bind the offered version, rejecting a manifest that pairs a higher version with an older signed installer; they do not provide Windows Authenticode publisher identity. The signing private key is an Actions secret with a protected external backup; only its public key is committed. Production endpoints use HTTPS. Debug acceptance alone permits a loopback fixture endpoint and uses version 0.0.0, making real newer-version comparison testable without downgrades in production.
 
-Documentation-only commits may explicitly skip CI after verification against unchanged, previously tested application code; they do not create a release. Operational versioning, artifact locations, signing recovery, and public-launch checks are maintained in [docs/RELEASING.md](docs/RELEASING.md).
+The importable main-branch ruleset requires pull requests and the existing CI checks, including for documentation-only changes. Operational versioning, artifact locations, signing recovery, ruleset setup, and public-distribution checks are maintained in [docs/RELEASING.md](docs/RELEASING.md).
