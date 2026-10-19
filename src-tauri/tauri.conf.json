@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "x-talk",
+  "version": "1.6.0",
+  "identifier": "com.xander.xtalk",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "x-talk",
+        "width": 1100,
+        "height": 780,
+        "minWidth": 380,
+        "minHeight": 360,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'",
+      "capabilities": [
+        "main"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "binaries/ffmpeg.exe": "binaries/ffmpeg.exe",
+      "binaries/ffprobe.exe": "binaries/ffprobe.exe",
+      "binaries/NOTICE.txt": "binaries/NOTICE.txt",
+      "binaries/FFmpeg-LICENSE.txt": "binaries/FFmpeg-LICENSE.txt",
+      "binaries/THIRD-PARTY-NOTICES.txt": "binaries/THIRD-PARTY-NOTICES.txt",
+      "../LICENSE": "LICENSE",
+      "../NOTICE": "NOTICE"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "license": "Apache-2.0"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyQzNGRjAyMEI0RTU0M0MKUldROFZFNExBdi9Ec3VQRmIrRDRGTWpZTDZLd3pVRGI5Y1JMODRPaHZ3emZwMEo3Zk55MnJsQ1kK",
+      "endpoints": [
+        "https://github.com/alexander-north/x-talk/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      },
+      "requireSignedVersion": true
+    }
+  }
+}

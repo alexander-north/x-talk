@@ -1,0 +1,12 @@
+CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied TEXT NOT NULL);
+CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
+CREATE TABLE presets(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, document TEXT NOT NULL);
+CREATE TABLE entries(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, document TEXT NOT NULL, deleting INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE, status TEXT NOT NULL, stage TEXT NOT NULL, document TEXT NOT NULL);
+CREATE UNIQUE INDEX pending_entry ON jobs(entry_id) WHERE status IN ('queued','running','paused','unknown');
+CREATE INDEX queue_order ON jobs(status,seq);
+CREATE TABLE file_gc(path TEXT PRIMARY KEY);
+CREATE TABLE reservations(id TEXT PRIMARY KEY);
+CREATE TABLE audio_leases(entry_id TEXT PRIMARY KEY);
+INSERT INTO schema_migrations VALUES(1,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+PRAGMA user_version=1;

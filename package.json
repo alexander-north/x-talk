@@ -1,0 +1,48 @@
+{
+  "name": "x-talk",
+  "version": "1.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev --features desktop",
+    "desktop:ui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-ui.ps1",
+    "desktop:build": "node scripts/verify-media.mjs && tauri build --features desktop",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:e2e": "wdio run tests/e2e/wdio.conf.mjs",
+    "desktop:debug": "node scripts/verify-media.mjs && tauri build --features desktop --debug --no-bundle",
+    "desktop:test-build": "node scripts/verify-media.mjs && tauri build --debug --features desktop,test-providers --no-bundle --config tests/e2e/tauri.acceptance.conf.json"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "svelte": "5.57.2"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "6.2.4",
+    "@tauri-apps/cli": "2.12.3",
+    "@tsconfig/svelte": "5.0.8",
+    "@types/node": "24.19.2",
+    "svelte-check": "4.7.6",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "5.0.5",
+    "@wdio/cli": "10.0.2",
+    "@wdio/local-runner": "10.0.2",
+    "@wdio/mocha-framework": "10.0.1",
+    "@wdio/spec-reporter": "10.0.1",
+    "@wdio/globals": "10.0.2",
+    "tsx": "4.23.15"
+  },
+  "engines": {
+    "node": ">=24.11.1"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexander-north/x-talk.git"
+  }
+}

@@ -1,0 +1,55 @@
+[package]
+name = "x-talk"
+version = "1.6.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/alexander-north/x-talk"
+default-run = "x-talk"
+rust-version = "1.93"
+[lib]
+name = "x_talk"
+crate-type = ["lib"]
+[[bin]]
+name = "x-talk"
+path = "src/main.rs"
+required-features = ["desktop"]
+[features]
+default = []
+test-providers = ["desktop"]
+bundled-ui = ["tauri/custom-protocol"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-global-shortcut", "dep:tauri-plugin-autostart", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-dialog", "dep:tauri-plugin-clipboard-manager", "dep:tauri-plugin-window-state", "dep:cpal", "dep:tauri-plugin-updater"]
+[build-dependencies]
+tauri-build = { version = "=2.7.3", optional = true, features = [] }
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+thiserror = "=2.0.21"
+uuid = { version = "=1.28.0", features = ["v4", "serde"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
+rusqlite = { version = "=0.40.2", features = ["bundled", "backup"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
+tokio = { version = "=1.53.3", features = ["rt-multi-thread", "fs", "process", "time", "sync", "io-util", "macros"] }
+tokio-util = { version = "=0.7.20", features = ["io"] }
+async-trait = "=0.1.92"
+tokio-tungstenite = { version = "=0.30.0", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "=0.3.34", features = ["sink"] }
+base64 = "=0.22.1"
+crossbeam-queue = "=0.3.14"
+hound = "=3.5.1"
+fs2 = "=0.4.3"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features=false, features = ["fmt", "std"] }
+tracing-appender = "=0.2.5"
+tauri = { version = "=2.12.4", optional = true, features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = { version = "=2.4.1", optional = true }
+tauri-plugin-autostart = { version = "=2.7.0", optional = true }
+tauri-plugin-single-instance = { version = "=2.5.4", optional = true }
+tauri-plugin-dialog = { version = "=2.8.3", optional = true }
+tauri-plugin-clipboard-manager = { version = "=2.5.0", optional = true }
+tauri-plugin-window-state = { version = "=2.5.0", optional = true }
+tauri-plugin-updater = { version = "=2.14.0", optional = true }
+cpal = { version = "=0.17.0", optional = true }
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Security_Credentials", "Win32_Foundation", "Win32_Media_Audio", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_Security"] }
+[dev-dependencies]
+tempfile = "=3.27.0"

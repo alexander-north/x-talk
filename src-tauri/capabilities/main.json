@@ -1,0 +1,1 @@
+{"identifier":"main","description":"Bundled main window may use the validated application command boundary and receive state events.","local":true,"windows":["main"],"permissions":["core:event:allow-listen","core:event:allow-unlisten","allow-application"]}

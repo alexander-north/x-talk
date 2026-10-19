@@ -1,0 +1,24 @@
+# Scratch work and local artifacts
+/.tmp/
+/.codex/
+/.playwright-mcp/
+.DS_Store
+Thumbs.db
+
+# Local secrets; commit only sanitized examples
+.env
+.env.*
+!.env.example
+!.env.*.example
+/node_modules/
+/dist/
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/binaries/*.exe
+/src-tauri/binaries/ffmpeg-*
+/src-tauri/binaries/ffprobe-*
+/src-tauri/binaries/THIRD-PARTY-NOTICES.txt
+
+# Python tooling caches
+__pycache__/
+*.pyc

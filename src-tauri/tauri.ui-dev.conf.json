@@ -1,0 +1,17 @@
+{
+  "productName": "x-talk UI development",
+  "identifier": "com.xander.xtalk.ui-dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "x-talk | UI development",
+        "width": 1100,
+        "height": 780,
+        "minWidth": 380,
+        "minHeight": 360,
+        "visible": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+prompts/*.md -text
+*.png binary
+*.ico binary

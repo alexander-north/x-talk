@@ -1,0 +1,13 @@
+x-talk
+Copyright 2026 Alexander North and x-talk contributors
+
+Original project code, documentation, prompts, artwork, and synthesized sounds
+are licensed under Apache License 2.0 unless otherwise noted.
+
+Third-party components retain their own licenses. Windows distributions include
+FFmpeg under LGPL 2.1 or later as separate executables; see binaries/NOTICE.txt,
+binaries/FFmpeg-LICENSE.txt, and binaries/THIRD-PARTY-NOTICES.txt.
+Corresponding FFmpeg source and the build recipe accompany release downloads.
+
+The Apache license does not grant trademark rights. Modified distributions must
+not imply endorsement by the x-talk maintainers.

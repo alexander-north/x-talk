@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible x-talk problem.
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include API keys, private recordings, or transcripts. For vulnerabilities, use the private reporting route in SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: App version and build ID
+      description: Find these in Settings → General.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and audio device
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected result, and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Optional sanitized logs and provider/model
+      description: Review logs before sharing. Never include credentials or private content.
