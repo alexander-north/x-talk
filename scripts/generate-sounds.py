@@ -13,11 +13,11 @@ import wave
 RATE = 48_000
 ROOT = Path(__file__).resolve().parents[1] / 'assets' / 'sounds'
 EVENTS = {
-    'started': ('record-start', .350),
+    'started': ('record-start', .400),
     'stopped': ('record-stop', .330),
     'canceled': ('record-cancel', .320),
-    'transcribed': ('transcription-complete', .400),
-    'transformed': ('polishing-complete', .440),
+    'transcribed': ('transcription-complete', .440),
+    'transformed': ('polishing-complete', .350),
 }
 
 
@@ -49,12 +49,12 @@ def voice(out, start, length, low, high, gain, attack=.006, decay=3.,
 def render(event):
     out = [0.] * round(EVENTS[event][1] * RATE)
     attack = .006
-    if event == 'started':
-        # A rapid rising 1-2-3, with a longer, stronger final landing.
+    if event == 'transformed':
+        # The former start gesture, with its final tone raised by 50%.
         for start, length, hz, gain in [
             (0., .105, 392., .42),
             (.075, .110, 494., .46),
-            (.150, .200, 659., .57),
+            (.150, .200, 988.5, .57),
         ]:
             voice(out, start, length, hz * .98, hz, gain, attack, 2.5,
                   glide=.018, fm=.45, ratio=1., harmonic=.09)
@@ -82,7 +82,7 @@ def render(event):
         # One shared C-major arc: C4-D4-F4 followed by G4-A4-C5.
         # Both phrases skip upward on the final step (1-2-4 / 5-6-8),
         # with identical timbre and onset spacing so they form one sentence.
-        if event == 'transcribed':
+        if event == 'started':
             pitches = [261.63, 293.66, 349.23]
             lengths = [.125, .135, .220]
             gains = [.40, .42, .47]
@@ -126,4 +126,6 @@ if __name__ == '__main__':
         write(extras / 'five-cues.wav', sequence, 16)
         write(extras / 'completion-pair.wav',
               render('transcribed') + render('transformed'), 16)
+        write(extras / 'progression.wav',
+              render('started') + [0.] * RATE + render('transcribed') + [0.] * RATE + render('transformed'), 16)
     print('Rendered five runtime cues' + (' and scratch audition assets.' if args.extras else '.'))

@@ -3,7 +3,7 @@
 #[cfg(any(windows, test))]
 use crate::domain::*;
 
-pub const VERSION: &str = "v6";
+pub const VERSION: &str = "v7";
 #[cfg(test)]
 const EVENTS: [&str; 5] = [
     "started",
@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn cues_have_distinct_durations_audible_energy_and_no_clipping() {
         let mut lengths = std::collections::BTreeSet::new();
-        for (event, frames) in EVENTS.into_iter().zip([16800, 15840, 15360, 19200, 21120]) {
+        for (event, frames) in EVENTS.into_iter().zip([19200, 15840, 15360, 21120, 16800]) {
             let mut reader =
                 hound::WavReader::new(std::io::Cursor::new(asset(event).unwrap())).unwrap();
             assert_eq!(reader.spec().sample_rate, 48000);

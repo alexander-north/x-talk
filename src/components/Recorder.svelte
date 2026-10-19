@@ -7,7 +7,7 @@
  import type {AppState,Entry} from '../types';
  import {duration,elapsedTime} from '../ipc';
  import Icon from './Icon.svelte';
- import CopyButton from './CopyButton.svelte';
+ import {tailText} from '../tail-text';
  let {snapshot,entry,elapsed,captureBusy,busy,compact,spectrum=[],control,copy,importAudio}: {snapshot:AppState;entry:Entry|null;elapsed:number;captureBusy:boolean;busy:boolean;compact:boolean;spectrum?:number[];control:(action:string)=>Promise<void>;copy:(id:string,kind:string)=>Promise<boolean>;importAudio:()=>void}=$props();
  let active=$derived(snapshot.capture.active);
  let finalizing=$derived(!!snapshot.capture.finalizing);
@@ -36,8 +36,19 @@
  let front=$state<'transcript'|'transformed'>('transcript');
  let transcriptRear=$derived(stacked&&front!=='transcript');
  let transformedRear=$derived(front!=='transformed');
- let transcriptBox=$state<HTMLDivElement>();
- let transformedBox=$state<HTMLDivElement>();
+ let transcriptBox=$state<HTMLButtonElement>();
+ let transformedBox=$state<HTMLButtonElement>();
+ let copied=$state<string|null>(null);
+ let copyTimer:ReturnType<typeof setTimeout>;
+ onDestroy(()=>clearTimeout(copyTimer));
+ async function copyCard(kind:'transcript'|'transformed'){
+  const selected=latest;
+  if(!selected)return;
+  if(await copyResult(selected.id,kind)){
+   copied=`${selected.id}:${kind}`;
+   clearTimeout(copyTimer);copyTimer=setTimeout(()=>copied=null,1500);
+  }
+ }
  let previousEntry:string|null=null;
  let previousTransformation:string|null=null;
  $effect(()=>{
@@ -67,18 +78,19 @@
  </section>
  {#if !compact}<div class="home-outputs" class:stacked aria-label="Recording output cards">
   <section class="output-card transcript-card" class:card-front={stacked&&front==='transcript'} class:card-rear={transcriptRear} aria-label="Transcript card">
-   {#if transcriptRear}<button class="card-reveal" aria-label="Show transcript" onclick={()=>show('transcript')}></button>{/if}
-   <div class="text-heading"><h2><Icon name="mic" size={15}/>{live?'Live preview':'Transcript'}{#if latest?.transcription_ms!=null}<span class="output-timing" title={latest?.transcript_model?.includes('scribe_v2_realtime')?'Time from Stop until the final transcript returned':'Transcription time, excluding queue and audio preparation'}>– {elapsedTime(latest.transcription_ms)}</span>{/if}</h2>{#if transcriptRear}<span class="card-hint">Click to view <Icon name="arrow" size={12}/></span>{:else}<CopyButton available={!!latest?.transcript} label="Copy transcript" copy={()=>copyResult(latest!.id,'transcript')}/>{/if}</div>
-   <div bind:this={transcriptBox} class="output home-output" role="textbox" aria-label="Transcript output" aria-readonly="true" aria-multiline="true" tabindex={transcriptRear?-1:0} inert={transcriptRear} class:placeholder={!output}>{#if live}{output||'Listening… Your preview may change.'}{:else}{#key latest?.transcript}<span transition:fade={{duration:prefersReducedMotion.current?0:450}}>{latest?.transcript??'Your words will appear here after recording.'}</span>{/key}{/if}</div>
+   <button bind:this={transcriptBox} class="card-reveal card-action" disabled={!transcriptRear&&!latest?.transcript} aria-label={transcriptRear?'Show transcript':'Copy transcript'} onclick={()=>transcriptRear?show('transcript'):copyCard('transcript')}></button>
+   <div class="text-heading"><h2><Icon name="mic" size={15}/>{live?'Live preview':'Transcript'}{#if latest?.transcription_ms!=null}<span class="output-timing" title={latest?.transcript_model?.includes('scribe_v2_realtime')?'Time from Stop until the final transcript returned':'Transcription time, excluding queue and audio preparation'}>– {elapsedTime(latest.transcription_ms)}</span>{/if}</h2>{#if transcriptRear}<span class="card-hint">Click to view <Icon name="arrow" size={12}/></span>{:else}<span class="card-copy-hint" aria-hidden="true"><Icon name={copied===`${latest?.id}:transcript`?'check':'copy'} size={17}/></span>{/if}</div>
+   <div class="output home-output" aria-label="Transcript output" inert={transcriptRear} class:placeholder={!output} use:tailText={live?(output||'Listening… Your preview may change.'):(latest?.transcript??'Your words will appear here after recording.')}></div>
   </section>
   {#if live}<p class="help" role="status">{finalizing?'Confirming final text…':live.error?live.error.message:live.status==='connecting'?'Connecting to ElevenLabs… Audio is being recorded locally.':'Live preview · Text is finalized after Stop.'}</p>{/if}
   {#if stacked}
    <section transition:fade={{duration:prefersReducedMotion.current?0:550}} class="output-card transformed-card" class:card-front={front==='transformed'} class:card-rear={transformedRear} aria-label="Transformed output card">
-    {#if transformedRear}<button class="card-reveal" aria-label="Show transformed output" onclick={()=>show('transformed')}></button>{/if}
-    <div class="text-heading"><h2><Icon name="spark" size={15}/>Transformed{#if latest?.transformation_ms!=null}<span class="output-timing" title="Transformation processing time">– {elapsedTime(latest.transformation_ms)}</span>{/if}{#if latest?.transformed_revision!==latest?.transcript_revision}<span class="badge">Out of date</span>{/if}</h2>{#if transformedRear}<span class="card-hint">Click to view <Icon name="arrow" size={12}/></span>{:else}<CopyButton available={!!latest?.transformed} label="Copy transformed output" copy={()=>copyResult(latest!.id,'transformed')}/>{/if}</div>
-    <div bind:this={transformedBox} class="output home-output" role="textbox" aria-label="Transformed output" aria-readonly="true" aria-multiline="true" tabindex={transformedRear?-1:0} inert={transformedRear}>{#key latest?.transformed}<span transition:fade={{duration:prefersReducedMotion.current?0:450}}>{latest?.transformed}</span>{/key}</div>
+    <button bind:this={transformedBox} class="card-reveal card-action" aria-label={transformedRear?'Show transformed output':'Copy transformed output'} onclick={()=>transformedRear?show('transformed'):copyCard('transformed')}></button>
+    <div class="text-heading"><h2><Icon name="spark" size={15}/>Transformed{#if latest?.transformation_ms!=null}<span class="output-timing" title="Transformation processing time">– {elapsedTime(latest.transformation_ms)}</span>{/if}{#if latest?.transformed_revision!==latest?.transcript_revision}<span class="badge">Out of date</span>{/if}</h2>{#if transformedRear}<span class="card-hint">Click to view <Icon name="arrow" size={12}/></span>{:else}<span class="card-copy-hint" aria-hidden="true"><Icon name={copied===`${latest?.id}:transformed`?'check':'copy'} size={17}/></span>{/if}</div>
+    <div class="output home-output" aria-label="Transformed output" inert={transformedRear} use:tailText={latest?.transformed??''}></div>
    </section>
   {/if}
+  <span class="visually-hidden" role="status">{copied?'Copied':''}</span>
  </div>{/if}
  <div class="recorder-footer">{#if !compact}<button class="import-footer" disabled={busy||snapshot.operation_busy||active} onclick={importAudio}><Icon name="upload" size={13}/>Import audio</button>{/if}<div class="shortcut-hints">{#if snapshot.settings.shortcuts.toggle}<span><kbd>{snapshot.settings.shortcuts.toggle}</kbd> record / stop</span>{/if}{#if snapshot.settings.shortcuts.cancel}<span><kbd>{snapshot.settings.shortcuts.cancel}</kbd> cancel</span>{/if}</div></div>
 </main>

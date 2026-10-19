@@ -96,6 +96,36 @@ describe('Warm glass recorder and serial processing',()=>{
   await browser.saveScreenshot('.tmp/glass/complete.png');
   await browser.waitUntil(async()=>await phase()==='idle',{timeout:7000});
  });
+ it('copies whole cards while displaying only the final fitting lines',async()=>{
+  let entry=await importRecording();
+  const text=Array.from({length:80},(_,i)=>`Sentence ${i+1}: café and a thoughtful idea.\n`).join('')+'Final words 👩🏽‍💻.';
+  await command('edit_recording',{id:entry.id,revision:entry.revision,title:entry.title,subtitle:entry.subtitle??'',transcript:text});
+  await browser.waitUntil(()=>browser.execute(()=>document.querySelector('.home-outputs').getAnimations({subtree:true}).every(a=>a.playState!=='running')));
+  const rear=$('button[aria-label="Show transcript"]');
+  if(await rear.isExisting()){
+   const point=await browser.execute(()=>{const r=document.querySelector('button[aria-label="Show transcript"]').getBoundingClientRect();return {x:Math.round(r.left+70),y:Math.round(r.top+18)};});
+   await browser.action('pointer').move({...point,origin:'viewport'}).down().up().perform();
+  }
+  try{
+   for(const width of [1100,800,460]){
+    await browser.setWindowSize(width,800);
+    await browser.waitUntil(()=>browser.execute(()=>{
+     const n=document.querySelector('.transcript-card .home-output');
+     return n.textContent.startsWith('… ')&&n.textContent.endsWith('Final words 👩🏽‍💻.')&&n.scrollHeight<=n.clientHeight+1&&n.scrollWidth<=n.clientWidth+1;
+    }),{timeoutMsg:'Card must keep final text visible without scrollbars'});
+   }
+   const cursor=await browser.execute(()=>getComputedStyle(document.querySelector('button[aria-label="Copy transcript"]')).cursor);
+   if(cursor!=='pointer')throw Error('Copy card is missing pointer affordance');
+   await $('button[aria-label="Copy transcript"]').click();
+   const clipboard=()=>Buffer.from(execFileSync('powershell.exe',['-NoProfile','-Command',"[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Clipboard -Raw)))"],{encoding:'utf8'}).trim(),'base64').toString('utf8').replace(/\r\n/g,'\n').trimEnd();
+   if(clipboard()!==text)throw Error('Card copied truncated text instead of the complete transcript');
+   await command('copy_text',{id:null,kind:null,text:'sentinel'});
+   await browser.execute(()=>document.querySelector('button[aria-label="Copy transcript"]').focus());
+   await browser.keys('Space');
+   await browser.waitUntil(async()=>clipboard()===text,{timeoutMsg:'Keyboard card activation did not copy full text'});
+   await browser.saveScreenshot('.tmp/glass/tail-copy.png');
+  }finally{await browser.setWindowSize(1100,800);}
+ });
  it('keeps cards readable in dark mode and controls within compact bounds',async()=>{
   await importRecording();
   const s=await command('state');await command('save_settings',{settings:{...s.settings,theme:'night'}});
