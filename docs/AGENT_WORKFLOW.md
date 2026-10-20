@@ -20,6 +20,7 @@ Windows x64 is the supported desktop target. WSL/Linux is useful for core Rust t
 | Native startup and commands | `src-tauri/src/app.rs`, `commands.rs` | Desktop lifecycle, shortcuts, tray, command registration, state/progress responses |
 | Domain and persistence | `domain.rs`, `storage.rs`, `src-tauri/migrations/` | Settings, jobs, immutable request snapshots, SQLite, history and retention |
 | Capture and media | `capture.rs`, `spectrum.rs`, `media.rs` | Microphone/writer lifecycle, admission/recovery journals, validation and FFmpeg subprocesses |
+| Meetings | `src-tauri/src/meetings/`, `src/meetings/`, `src/components/meetings/` | Separate SQLite library, durable jobs, WASAPI microphone/loopback capture, JSON projection and review UI |
 | Processing | `jobs.rs`, `providers.rs` | Queue/retry/resume behavior, stage persistence, provider requests |
 | Credentials and diagnostics | `credentials.rs`, `diagnostics.rs` | Windows credential storage and bounded local logs |
 | Audio feedback | `cues.rs`, `sounds.rs`, `scripts/generate-sounds.py` | Cue scheduling, playback, reproducible original sound assets |
@@ -69,6 +70,10 @@ python -m unittest discover -s tests/release -v
 ```
 
 Media integration tests use bundled executables on Windows and `/usr/bin/ffmpeg` and `/usr/bin/ffprobe` on Linux by default; `XTALK_FFMPEG` and `XTALK_FFPROBE` override those paths. Do not confuse deterministic acceptance-provider media preparation with these real-media tests.
+
+Meeting acceptance is separate from dictation. `tests/e2e/meetings.mjs` runs in the offline suite with real native media/storage/clipboard and synthetic providers. `cargo test --manifest-path src-tauri/Cargo.toml --test meetings --test meeting_media --locked` covers meeting domain, jobs and media. The ignored `meeting_media` test prepares a four-hour synthetic WAV. On Windows, the ignored `meeting_capture` test uses real microphone and loopback devices; coordinate first. Set `XTALK_MEETING_CAPTURE_SECONDS=7200` for the duration check; it mutes both retained sources after the opening synthetic sample. Do not run native capture tests concurrently. `live_meetings` is an explicitly authorized, billable synthetic provider check; inspect its environment requirements before running it.
+
+Meeting data lives in its own `meetings` subdirectory and must never be cleared by dictation fixtures. Unknown paid submissions require explicit retry; known AssemblyAI IDs resume polling. Capture journals and admission journals preserve local recovery. JSON exports omit managed paths and provider upload URLs.
 
 Record the commands, operating system, build identity, and outcome. Test counts evolve: report the current results, not historical counts copied from SPEC. A Windows Server hosted test is not evidence for every Windows 10/11 device configuration.
 

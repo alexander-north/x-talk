@@ -40,6 +40,7 @@ Tested on Windows 10 Pro x64; Windows 11 hasn't had a separate hardware acceptan
 
 - **Less retyping.** Import existing audio, or find an earlier recording to play, edit, export, or retry.
 - **Words as you go.** ElevenLabs has an optional real-time mode with a live preview. Imports and retries use batch transcription.
+- **Meetings.** Record microphone and system audio, or import audio/video. AssemblyAI creates a speaker-labelled transcript and OpenAI Luna writes the brief. Rename or merge speakers, correct turns, and copy the complete meeting as JSON. Video imports retain only extracted audio. Meeting audio defaults to the latest 50 recordings; text stays until you delete it.
 - **A little room on your screen.** Compact mode keeps just the recording controls. Pick a light, dark, or system theme, and adjust sounds and shortcuts to suit you.
 
 Closing the window keeps x-talk in the tray. Use **Quit** to exit, or change that behavior in **Settings → General**. Updates live there too. Versions before 1.5 need one manual upgrade; in-app downloads require public GitHub releases.
@@ -48,7 +49,7 @@ If the start sound sneaks into your recording, try headphones or turn that cue o
 
 ## Your keys, your data
 
-**Transcription:** OpenAI, ElevenLabs, AssemblyAI, or Deepgram. **Cleanup:** OpenAI or Anthropic. OpenAI and ElevenLabs have had live integration checks; the other adapters have automated coverage but still need live acceptance.
+**Transcription:** OpenAI, ElevenLabs, AssemblyAI, or Deepgram. **Cleanup:** OpenAI or Anthropic. OpenAI, ElevenLabs, and the AssemblyAI/Luna meeting workflow have had live integration checks; other adapters still need live acceptance.
 
 - Audio goes to your chosen transcription provider. Cleanup sends your transcript and configured prompts/context to its provider. Their pricing, privacy, and retention policies apply.
 - Keys stay in **Windows Credential Manager**. The app doesn't load `.env` files.

@@ -7,6 +7,9 @@
  import type {AppState,Entry,Job,Playback} from './types';
  import Icon from './components/Icon.svelte';
  import Recorder from './components/Recorder.svelte';
+ import Meetings from './components/meetings/Meetings.svelte';
+ import MeetingCapture from './components/meetings/MeetingCapture.svelte';
+ import {captureStatus} from './meetings/ipc';
  import RecordingsTable from './components/RecordingsTable.svelte';
  import CopyButton from './components/CopyButton.svelte';
  import SettingsView from './components/Settings.svelte';
@@ -74,6 +77,7 @@
   <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36"></button>
   <div class="rail-divider"></div>
   <button class="rail-button" class:chosen={view==='recordings'} onclick={()=>go('recordings')} aria-label="Recordings" title="Recordings" aria-current={view==='recordings'?'page':undefined}><Icon name="list"/></button>
+  <button class="rail-button" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><span style="display:flex;align-items:center"><img src={heart} alt="" width="23" height="23"/><img src={heart} alt="" width="23" height="23" style="margin-left:-12px;margin-top:10px"/></span></button>
   <button class="rail-button" class:chosen={view==='settings'} onclick={()=>go('settings')} aria-label="Settings" title="Settings" aria-current={view==='settings'?'page':undefined}><Icon name="gear"/></button>
   <div class="rail-divider"></div>
   <button class="rail-button" disabled={!snapshot||busy} onclick={()=>mode(compact?'full':'compact')} aria-label={compact?'Expand workspace':'Compact view'} title={compact?'Expand workspace':'Compact view'}><Icon name="compact"/></button>
@@ -87,12 +91,15 @@
   {#if snapshot?.shortcut_error}<div class="banner error">{snapshot.shortcut_error.message} Use the Recorder to record.</div>{/if}
   {#each snapshot?.recovery_warnings??[] as warning}<div class="banner recovery-warning" role="alert">{warning.message}</div>{/each}
   {#if paused.length}<section class="recovery"><div><strong>{paused.length} interrupted job{paused.length===1?'':'s'}</strong><small>Paused until you resume. Fresh recordings can continue.</small></div><button disabled={busy||snapshot?.operation_busy||paused.every(j=>j.status==='unknown')} onclick={()=>run(()=>api.recover(paused.filter(j=>j.status==='paused').map(j=>j.id),false))}>Resume available</button><button class="subtle-button" disabled={busy} onclick={()=>confirm='discard'}>Discard pending</button></section>{/if}
-  {#if loading}<main class="empty">Opening your workspace…</main>
+  <MeetingCapture visible={view==='meetings'&&!compact} {compact} dictating={snapshot?.capture.active??false}/>
+  {#if compact&&$captureStatus?.id}<span class="muted" style="text-align:center">Meeting controls</span>
+  {:else if loading}<main class="empty">Opening your workspace…</main>
   {:else if !snapshot}<main class="empty"><h1>Could not connect to x-talk</h1><p>{error||'Open this interface through the desktop application.'}</p><button onclick={refresh}>Retry connection</button></main>
   {:else if view==='record'}
    <Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')} importAudio={()=>run(api.import)}/>
    {#if latestJob&&['failed','unknown','paused'].includes(latestJob.status)}<div class="home-job-error stage-error" role="alert"><strong>{jobLabel(latestJob)}</strong>{#if latestJob.error}<p>{latestJob.error.message}</p>{/if}<button class="subtle-button" onclick={()=>go('recordings')}>View recording</button></div>{/if}
   {:else if view==='recordings'}<RecordingsTable {snapshot} {refreshKey} {busy} {run} {edit} {remove} clearAll={()=>{error='';confirm='clear';}} {inspect} {playback}/>
+  {:else if view==='meetings'}<Meetings/>
   {:else}<SettingsView bind:this={settingsView} {snapshot} {write} {refresh} {guard}/>
   {/if}
  </div>
@@ -103,7 +110,7 @@
   {:else if confirm==='text'&&selected}<div class="text-heading"><p class="muted">{selected.title}</p><CopyButton available={!!selected[textKind]} label="Copy full text" copy={()=>run(()=>api.copy(selected!.id,textKind),'Copied')}/></div><div class="output full-text" role="textbox" aria-label="Full saved text" aria-readonly="true" aria-multiline="true" tabindex="0">{selected[textKind]}</div>
   {:else if confirm==='unsaved'}<p>You have unsaved text changes. Save them before leaving this view?</p><div class="actions dialog-actions"><button onclick={()=>{confirm=null;pendingAction=null;}}>Keep editing</button><button disabled={busy} onclick={()=>continueNavigation(false)}>Discard changes</button><button class="primary" disabled={busy} onclick={()=>continueNavigation(true)}>Save and continue</button></div>
   {:else if confirm==='clear'}<p>This permanently deletes your entire recordings library and its saved audio, including paused work. Search and pagination do not limit this action. Imported source files are preserved.</p><div class="actions dialog-actions"><button disabled={busy} onclick={()=>confirm=null}>Cancel</button><button class="danger" disabled={busy||snapshot?.capture.active||snapshot?.jobs.some(j=>['queued','running','canceling'].includes(j.status))} onclick={()=>{void run(api.clearRecordings,'Recordings cleared').then(cleared=>{if(cleared){selected=null;confirm=null;}});}}>Clear all recordings</button></div>
-  {:else}{#if confirm!=='quit'||snapshot?.capture.active||hasPending}<p>{confirm==='delete'?'This removes the app-managed audio and all saved text. Your imported source file is preserved.':confirm==='discard'?'Saved history and text stay available. Pending work will be discarded and audio retention will apply.':snapshot?.capture.active?'Choose whether to save or discard the active recording. Pending processing will pause after exit.':'Pending processing will pause until you explicitly resume it after reopening.'}</p>{/if}<div class="actions dialog-actions"><button onclick={()=>confirm=null}>Keep working</button>{#if confirm==='delete'}<button class="danger" disabled={busy} onclick={()=>{void run(()=>api.delete(selected!),'Recording deleted').then(saved=>{if(saved){selected=null;confirm=null;}});}}>Delete recording</button>{:else if confirm==='discard'}<button class="danger" disabled={busy} onclick={()=>{void run(()=>api.recover(paused.map(j=>j.id),true),'Pending work discarded').then(saved=>{if(saved)confirm=null;});}}>Discard work</button>{:else}{#if snapshot?.capture.active}<button class="danger" disabled={busy} onclick={()=>run(()=>api.quit(true))}>Discard and quit</button>{/if}<button class="primary" disabled={busy} onclick={()=>run(()=>api.quit(false))}>{snapshot?.capture.active?'Stop and quit':'Quit'}</button>{/if}</div>{/if}
+  {:else}{#if confirm!=='quit'||snapshot?.capture.active||$captureStatus?.id||hasPending}<p>{confirm==='delete'?'This removes the app-managed audio and all saved text. Your imported source file is preserved.':confirm==='discard'?'Saved history and text stay available. Pending work will be discarded and audio retention will apply.':(snapshot?.capture.active||$captureStatus?.id)?'Choose whether to save or discard the active recording. Pending processing will pause after exit.':'Pending processing will pause until you explicitly resume it after reopening.'}</p>{/if}<div class="actions dialog-actions"><button onclick={()=>confirm=null}>Keep working</button>{#if confirm==='delete'}<button class="danger" disabled={busy} onclick={()=>{void run(()=>api.delete(selected!),'Recording deleted').then(saved=>{if(saved){selected=null;confirm=null;}});}}>Delete recording</button>{:else if confirm==='discard'}<button class="danger" disabled={busy} onclick={()=>{void run(()=>api.recover(paused.map(j=>j.id),true),'Pending work discarded').then(saved=>{if(saved)confirm=null;});}}>Discard work</button>{:else}{#if snapshot?.capture.active||$captureStatus?.id}<button class="danger" disabled={busy} onclick={()=>run(()=>api.quit(true))}>Discard and quit</button>{/if}<button class="primary" disabled={busy} onclick={()=>run(()=>api.quit(false))}>{snapshot?.capture.active||$captureStatus?.id?'Stop and quit':'Quit'}</button>{/if}</div>{/if}
   {#if error}<p class="error-text" role="alert">{error}</p>{/if}
  </dialog>{/if}
 </div>

@@ -2,6 +2,8 @@
 
 Status: 1.6 release series, with Windows x64 installers, signed in-app updates, and optional ElevenLabs real-time transcription. Main uses the 1.6.0 development baseline; CI assigns each shipped release its own patch version. The requirements below define intended behavior. Section 11 records dated verification evidence and remaining coverage gaps; earlier candidate results are historical, not claims about every current build. AssemblyAI, Deepgram, and Anthropic live acceptance remains deferred.
 
+The Meetings iteration below defines the local `feature/meetings` implementation, targeting the 1.7 release series. Native duration and owner acceptance remain in progress; it is not a published release. It supersedes the broader xTranscribe handoff where the owner narrowed scope on 2026-10-20. The remaining recording, provider, retention, and implementation sections describe existing **dictation** unless they explicitly refer to meetings. In particular, their one-hour limit, plain-text transcription, CPAL-only capture choice, serialized processing, and manual restart-resume rules do not constrain the separate meeting workflow.
+
 ## Confirmed planning constraints
 
 - The first release is for the owner's personal use on Windows x64. Windows 10 remains a hard requirement; the target edition and build are listed below.
@@ -17,7 +19,70 @@ A small, fast, lightweight Windows desktop application for recording speech, tra
 
 The primary workflow is: press a global hotkey, speak, press the hotkey again, and receive usable text on the clipboard for manual pasting. Automatic cursor insertion is outside the first-release scope. The application is a Tauri desktop app with a Rust core and bundled TypeScript UI. It is not a hosted web app.
 
-## Recording and processing
+## Meetings iteration — approved scope, 2026-10-20
+
+The goal is to record or import a meeting, produce a speaker-labelled transcript and AI brief, manage speakers, review/correct the transcript, and copy the result. Adapt xTranscribe's relevant workflows to xTalk's existing simple visual language. Preserve dictation's current functionality and responsiveness.
+
+### Input and recording
+
+- Accept audio files and video files. Read imported video in place and save extracted audio only; never retain an internal video copy or transmit video to a provider. Preserve the external source file.
+- OBS is an example of a tool that creates video files, not an integration. Ordinary mono/stereo audio is the main input case. For a file with several independent audio streams, use the first audio stream, preserve its channels, and disclose before processing that other streams will be omitted. No track selector or mixing interface.
+- Design for meetings up to four hours, including video inputs around 2–2.2 GB based on the owner's examples. These are engineering and acceptance targets, not measured capability or a new user-configurable size cap. Keep validation, bounded-memory processing, actual provider request limits, and physical disk-space handling.
+- Live recording captures the selected Windows output device's system audio and selected microphone, defaulting to both enabled; microphone-only and output-only modes remain available. Pin devices for the session, show separate activity meters, and preserve a synchronized timeline with separate source tracks and a derived mix.
+- Provide Start, Stop, source mute controls and explicit Discard; no Pause in this iteration. Muted microphone intervals retain elapsed time without retaining audible microphone samples. An application's microphone mute does not mute xTalk's separate capture.
+- Normal Stop finalizes durable audio and queues transcription followed by the brief. Recording can start without a network connection or provider keys; saved audio waits for setup when processing is unavailable. Discard does not queue processing.
+- Recoverable Windows buffer discontinuities keep recording with timestamp-aligned gaps and an explicit warning saved with the meeting and JSON. They must not be represented as verified silence.
+- Preserve partial audio after device loss, overflow, disk errors or interrupted capture. Do not restart capture or automatically submit recovered partial recordings. An enabled-source failure stops and saves the partial session with an explanation.
+- Keep the exact inline notice `You are responsible for letting everyone know they're being recorded.` visible for the first 15 seconds after actual capture readiness. Native session elapsed time controls visibility across navigation/minimization. Hide on Stop, Discard or failure. No spoken announcement, acknowledgement, modal or additional notice sound.
+
+### Providers and review
+
+- Use AssemblyAI only for meeting transcription and diarization, with one whole-recording job, English audio and requested disfluencies. OpenAI meeting transcription/diarization is excluded. Existing dictation providers remain unchanged.
+- Use OpenAI GPT-6 Luna (`gpt-6-luna`) for meeting briefs, independently of dictation's transformation settings. It is already xTalk's seeded transformation default. The model supports Responses and structured outputs; verify actual account access and brief quality during the authorized small live check. See [Luna documentation](https://developers.openai.com/api/docs/models/gpt-6-luna).
+- Preserve the reference brief's title, overview, Topics, Decisions, Action items, Open questions and Suggested follow-up questions. Validate supporting transcript segment references and allow timestamp playback. Unknown owners/dates stay unspecified; advice is not an agreed decision; transcript content is untrusted source material.
+- Add a Meetings navigation destination with the proposed double-heart treatment, a searchable meeting library and four review tabs: Meeting brief, Transcript, Manage speakers and Details. The library shows one readable brief preview per meeting, alongside title/date/duration/speakers/status; do not use dictation's separate transcript/transformed preview fields. Reuse xTalk's themes, typography, components, keyboard focus and reduced-motion behavior.
+- Include timestamped playback, transcript search/speaker filter, speaker names and reversible merges, turn text/speaker corrections and restoration of originals. Preserve provider originals beneath edits. Transcript/speaker changes make the brief stale; metadata-only edits do not.
+- Display the brief and diarized transcript as readable text. Explicit meeting copy actions use **Copy meeting JSON** and copy the full structured meeting package described below, including both transcript and brief. A copy affordance beside the brief preview copies the complete package, not only the preview. No Markdown/plain-text copy modes, separate brief-only copy mode, or automatic meeting clipboard replacement.
+- Allow **Download audio** while retained audio is available: imported audio uses the saved original, imported video uses the extracted audio, and live recording uses the complete synchronized meeting recording. No video download or downloadable clips.
+- Allow brief regeneration without re-transcription. Re-transcription from retained audio preserves previous results during work/on failure and replaces them atomically on success, explaining any reset of names/merges/corrections. Metadata changes must not overwrite a manual title.
+- Compact mode shows simple active-meeting controls, timer and source state. Preserve an obvious recording indicator and access to Stop when navigating or using the tray.
+
+### Meeting JSON clipboard contract
+
+JSON is the meeting export format, delivered through the clipboard. No separate transcript-file download or Markdown export is planned. UI preview, transcript filtering and selected tab do not narrow the copied meeting.
+
+- Use one versioned xTalk meeting schema and one native serializer for every meeting copy entry point. Produce valid, readable JSON text with proper escaping, not Markdown fences or a raw provider response.
+- Include meeting identity/title, call/added dates, duration, source kind/displayed filename, audio availability, actual transcription/brief provider and model, transcript generation and revision.
+- Include resolved speaker IDs/names, turn and word counts, and estimated per-speaker time from the union of that speaker's diarized turn intervals. Recompute for current corrections/merges; do not double-count overlapping turns of the same resolved speaker. Describe this as turn coverage, which includes pauses, rather than exact acoustically measured speech time. Cross-speaker overlaps can make speaker totals exceed meeting duration. Missing values remain unknown/null.
+- Include the complete timestamped transcript with stable turn IDs, current speaker assignments and corrected text. Preserve original text/speaker references and correction provenance so edited content is distinguishable from provider output. Preserve original word timestamps/confidence when actually supplied by the provider, labeled as original evidence; do not invent alignment or confidence for edited words.
+- Include the structured brief with supporting turn IDs, its status, input generation/revision, and stale flag. If brief generation is pending or failed, copying the available transcript remains possible and the absent brief/status is explicit.
+- Build the package from one consistent saved revision. Stale briefs remain clearly marked after changes; references from a different transcript generation must not be presented as current evidence.
+- Do not embed audio, local filesystem paths, credentials, unfiltered raw provider payloads, acoustic measurements, conversation-event analysis or external replay links. Include saved metadata after audio retention expires and mark audio unavailable.
+- This lightweight transcript metadata does not reintroduce acoustic analysis, an agent API or a separate analytics dashboard. Word/turn counts and turn-coverage estimates are local calculations from saved transcription data.
+
+### Retention, isolation and recovery
+
+- Meeting audio retention is count-based and independent of dictation: default to the latest **50 meetings**, with a configurable count and keep-everything option. Retain textual content, speaker names, edits and briefs indefinitely until explicit meeting deletion.
+- Prune all app-managed audio associated with an expired meeting, including source tracks and derived playback/upload audio. Preserve original imported files. Count one meeting regardless of track count; retries do not make it newer.
+- Protect audio during capture, finalization, pending/recoverable processing, playback and export. Reapply retention after protection ends; protected work may temporarily exceed N. Audio-dependent actions become unavailable after pruning; brief regeneration and text copying remain available.
+- Omit storage budgets, byte-based retention, configurable file-size caps and new storage-usage displays from this pass. Technical file metadata, provider preflight and physical disk checks remain internal necessities, not product settings.
+- Keep meeting records, jobs, settings and deletion separate from dictation. Dictation's existing Clear All and retention must not remove meeting data.
+- Allow meeting background processing alongside dictation with bounded CPU/disk/network work. Only one capture session may be active. Dictation shortcuts never stop or discard a meeting.
+- Resume already-authorized queued meeting stages and known remote-job polling after restart. Persist provider IDs and guard all publications by active attempt/revision/deletion state. Never automatically repeat an ambiguous paid submission. Keep dictation's existing explicit Resume behavior.
+- Closing to tray can leave recording/processing active. Explicit Quit offers safe Stop/save or intentional Discard and preserves recoverable processing. Update installation accounts for both workflows. Suppress app playback/cues that could enter an active meeting's loopback capture.
+- Share native credential storage without silently replacing existing keys. No production `.env`, sibling-checkout, Node or Wrangler dependency. Diagnostics continue to exclude private text, audio, credentials and filenames.
+
+### Exclusions and acceptance
+
+- Exclude acoustic analysis and its UI/jobs, AI agent access/local API, encryption vaults, cloud library/sync/login, meeting bots, calendar/conferencing/OBS integrations, live transcription, speaker identity inference across meetings, and library migration.
+- Exclude acoustic/advanced conversation analysis (pitch, energy, inferred emotion, pace/gap/overlap event reports and speech spans), raw-provider exports, downloadable clips and external replay links. The versioned JSON clipboard package and its basic transcript metadata are included; timestamp playback and brief supporting-turn links remain inside the app.
+- Preserve xTranscribe's repository, library, credentials and archive access. No cloud changes, service shutdown, archive deletion or automatic migration.
+- Native acceptance uses the owner's Windows 10 machine with Blue Yeti microphone, separate speakers and headphones, plus available built-in microphone/speaker configurations. Document headphone and speaker results separately, including duplicate remote speech, local speech and simultaneous speech. Conference applications include Zoom, Google Meet, Teams and Slack; capture operates at the selected output device, with routing checked rather than app-specific integration.
+- Validate at least a two-hour import and actual two-hour Windows capture, with four-hour preparation/timeline boundary coverage. Measure bounded memory, beginning/end audio alignment and dictation responsiveness under meeting work. Do not substitute Linux, browser or synthetic-stream results for real Windows capture.
+- Verify normal Stop separately from Discard, failure/crash recovery, unknown provider submissions, speaker/edit/re-transcription races, indefinite text versus count-based audio retention, notice timing and native IPC permissions. Verify the same complete JSON package from library/brief/transcript copy controls despite filtering, valid JSON escaping, corrected/original provenance, speaker-coverage calculations and stale/absent brief state. Include retained-audio download, fresh and existing profiles and bundled-media/installer checks.
+- The current delivery target is an isolated local preview and local installer candidate. Public publication is a separate decision; main builds publish releases automatically.
+
+## Dictation recording and processing
 
 ### Optional real-time recording
 

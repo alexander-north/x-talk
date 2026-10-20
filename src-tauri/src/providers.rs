@@ -20,8 +20,8 @@ pub trait TransformationProvider: Send + Sync {
     async fn transform(&self, input: &str, preset: &Preset) -> Result<String>;
 }
 pub struct Providers {
-    client: Client,
-    keys: Arc<dyn CredentialStore>,
+    pub(crate) client: Client,
+    pub(crate) keys: Arc<dyn CredentialStore>,
 }
 impl Providers {
     pub fn new(keys: Arc<dyn CredentialStore>) -> Result<Self> {
@@ -39,7 +39,15 @@ impl Providers {
             keys,
         })
     }
-    async fn json(&self, req: RequestBuilder, stage: &str) -> Result<Value> {
+    pub(crate) async fn json(&self, req: RequestBuilder, stage: &str) -> Result<Value> {
+        self.json_limit(req, stage, 8 * 1024 * 1024).await
+    }
+    pub(crate) async fn json_limit(
+        &self,
+        req: RequestBuilder,
+        stage: &str,
+        limit: usize,
+    ) -> Result<Value> {
         tracing::info!(stage, "provider_request_started");
         let mut response=req.send().await.map_err(|e| {
 tracing::warn!(stage, timeout = e.is_timeout(), "provider_transport_failed");
@@ -80,7 +88,7 @@ else{
                 "Provider response was interrupted. The billing outcome may be unknown.",
             )
         })? {
-            if data.len() + chunk.len() > 8 * 1024 * 1024 {
+            if data.len() + chunk.len() > limit {
                 return Err(AppError::new(
                     stage,
                     "response_size",

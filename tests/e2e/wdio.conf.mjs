@@ -7,7 +7,7 @@ let driver;let updateServer;
 const isolated = process.env.XTALK_E2E_UPDATES==='1' || process.env.XTALK_E2E_STOP==='1' || process.env.XTALK_E2E_OFFLINE==='1';
 export const config = {
  hostname: '127.0.0.1', port: 4444, logLevel: 'warn', maxInstances: 1,
- specs: process.env.XTALK_E2E_UPDATES==='1'?['./updates.mjs']:process.env.XTALK_E2E_OFFLINE==='1'?['./offline.mjs','./glass.mjs','./shortcuts.mjs']:process.env.XTALK_E2E_STOP==='1'?['./smoke.mjs','./recording.mjs','./realtime.mjs','./diagnostics.mjs','./sounds.mjs','./progress.mjs','./interface.mjs','./shortcuts.mjs','./quit-idle.mjs','./quit-stop.mjs','./quit-discard.mjs','./quit-realtime-stop.mjs','./quit-realtime-discard.mjs']:['./smoke.mjs'], framework: 'mocha', reporters: ['spec'],
+ specs: process.env.XTALK_E2E_UPDATES==='1'?['./updates.mjs']:process.env.XTALK_E2E_OFFLINE==='1'?['./offline.mjs','./glass.mjs','./shortcuts.mjs','./meetings.mjs']:process.env.XTALK_E2E_STOP==='1'?['./smoke.mjs','./meeting-recording.mjs','./recording.mjs','./realtime.mjs','./diagnostics.mjs','./sounds.mjs','./progress.mjs','./interface.mjs','./shortcuts.mjs','./quit-idle.mjs','./quit-stop.mjs','./quit-discard.mjs','./quit-realtime-stop.mjs','./quit-realtime-discard.mjs']:['./smoke.mjs'], framework: 'mocha', reporters: ['spec'],
  capabilities: [{ 'tauri:options': { application: path.resolve(process.env.XTALK_APP_PATH || 'src-tauri/target/debug/x-talk.exe') } }],
  mochaOpts: { timeout: 120000 },
  beforeSession() {
