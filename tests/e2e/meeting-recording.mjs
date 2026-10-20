@@ -1,6 +1,7 @@
 // Opt-in real hardware acceptance; use only an isolated provider build.
 import {browser,$,expect} from '@wdio/globals';
-const command=(name,args={})=>browser.execute((n,a)=>window.__TAURI_INTERNALS__.invoke(n,a),name,args);
+// Wrap valid domain objects with an error field so WebDriver does not treat them as protocol errors.
+const command=async(name,args={})=>(await browser.execute(async(n,a)=>({result:await window.__TAURI_INTERNALS__.invoke(n,a)}),name,args)).result;
 const suite=process.env.XTALK_E2E_CAPTURE==='1'?describe:describe.skip;
 suite('Meeting native recording',()=>{
  before(async()=>{if(!(await command('state')).test_providers)throw Error('Requires isolated providers');});

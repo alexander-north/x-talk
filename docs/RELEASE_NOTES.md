@@ -2,7 +2,7 @@
 
 Record a meeting using your microphone and system audio, or import an audio or video file. Video imports save only the extracted audio. AssemblyAI provides speaker-labelled transcripts and OpenAI Luna produces the meeting brief. Add both provider keys in Settings.
 
-Review briefs and timestamped transcripts, name or merge speakers, correct individual turns, and copy the complete meeting as JSON. Download retained audio when needed. Meeting audio retention is separate from dictation and defaults to the latest 50 recordings; transcripts and briefs remain until explicitly deleted.
+Review briefs and timestamped transcripts, name or merge speakers, correct individual turns, and copy the complete meeting as JSON. Download retained audio when needed. Live meeting audio is compressed locally to keep retained recordings manageable. Meeting audio retention is separate from dictation and defaults to the latest 50 recordings; transcripts and briefs remain until explicitly deleted.
 
 Meeting recording supports Start and Stop, source muting, compact controls, and tray access. Use headphones to avoid duplicate speaker pickup; echo cancellation is not included. Existing dictation remains available.
 

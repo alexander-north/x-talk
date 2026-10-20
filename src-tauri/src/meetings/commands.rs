@@ -21,18 +21,6 @@ pub struct ImportPreview {
     inspection: media::Inspection,
 }
 #[derive(Serialize)]
-pub struct Summary {
-    id: String,
-    title: String,
-    added_at: String,
-    duration: Option<f64>,
-    status: Stage,
-    preview: Option<String>,
-    speakers: usize,
-    audio_available: bool,
-    revision: u64,
-}
-#[derive(Serialize)]
 pub struct View {
     meeting: export::MeetingExport,
     error: Option<String>,
@@ -76,30 +64,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
 }
 #[tauri::command]
 pub async fn meetings_list(app: tauri::AppHandle) -> Result<Vec<Summary>> {
-    blocking(move || {
-        app.state::<AppState>()
-            .meetings
-            .list()?
-            .into_iter()
-            .map(|m| {
-                let speakers = export::project(&m)?
-                    .transcript
-                    .map_or(0, |t| t.speakers.len());
-                Ok(Summary {
-                    id: m.id,
-                    title: m.title,
-                    added_at: m.added_at,
-                    duration: m.duration,
-                    status: m.attempt.stage,
-                    preview: m.brief.content.map(|b| b.summary),
-                    speakers,
-                    audio_available: m.audio.is_some(),
-                    revision: m.revision,
-                })
-            })
-            .collect()
-    })
-    .await
+    blocking(move || app.state::<AppState>().meetings.summaries()).await
 }
 #[tauri::command]
 pub async fn meeting_get(app: tauri::AppHandle, id: String) -> Result<View> {
@@ -570,15 +535,14 @@ pub async fn finish_capture(app: &tauri::AppHandle, discard: bool) -> Result<Opt
                 serde_json::from_slice(&tokio::fs::read(directory.join("capture.json")).await?)?
             }
         };
-        media::mix_capture(&state.media, &directory, &journal).await?;
+        let assets = media::finalize_capture(&state.media, &directory, &journal).await?;
         let mut m = Meeting::new("Meeting recording".into(), SourceKind::Recording, None);
         m.id = id.clone();
         m.added_at = journal.created.clone();
         m.call_at = journal.created;
         m.duration = Some(journal.elapsed);
         m.capture_warning = journal.warning;
-        let mut assets: Vec<_> = journal.tracks.into_iter().map(|t| t.filename).collect();
-        assets.push("prepared.m4a".into());
+
         m.audio = Some(Audio {
             download: "prepared.m4a".into(),
             prepared: Some("prepared.m4a".into()),
@@ -590,6 +554,9 @@ pub async fn finish_capture(app: &tauri::AppHandle, discard: bool) -> Result<Opt
         }
         let store = state.meetings.clone();
         blocking(move || store.insert(m)).await?;
+        let store = state.meetings.clone();
+        let saved_id = id.clone();
+        let _ = blocking(move || store.cleanup_capture_working_files(&saved_id)).await;
         state.meetings_wake.notify_one();
         Ok(Some(id))
     }
@@ -602,7 +569,12 @@ pub async fn finish_capture(app: &tauri::AppHandle, discard: bool) -> Result<Opt
     state.meeting_active.store(false, Ordering::Release);
     state.cues.idle();
     changed(app);
-    result
+    result.map_err(|error| {
+        if discard { error } else {
+            AppError::new("meeting_save", &error.category,
+                format!("{} Capture files are preserved. After resolving the problem, restart xTalk to recover this meeting.", error.message))
+        }
+    })
 }
 
 pub fn start_worker(
@@ -612,91 +584,99 @@ pub fn start_worker(
 ) {
     tauri::async_runtime::spawn(async move {
         let worker = super::jobs::Worker { store, provider };
-        // Capture recovery is local-only; the owner explicitly starts processing.
-        let root = worker.store.root.join("audio");
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            for entry in entries.flatten() {
-                let directory = entry.path();
-                if let Ok(bytes) = std::fs::read(directory.join("admission.json")) {
-                    if let Ok(m) = serde_json::from_slice::<Meeting>(&bytes) {
-                        if directory.file_name().and_then(|n| n.to_str()) == Some(&m.id)
-                            && worker.store.recoverable(&m.id).unwrap_or(false)
-                        {
-                            let _ = worker.store.insert(m);
-                            changed(&app);
-                        }
-                    }
-                    continue;
-                }
-                if let Ok(bytes) = std::fs::read(directory.join("import.pending")) {
-                    if let Ok(mut m) = serde_json::from_slice::<Meeting>(&bytes) {
-                        if directory.file_name().and_then(|n| n.to_str()) == Some(&m.id)
-                            && worker.store.recoverable(&m.id).unwrap_or(false)
-                        {
-                            m.attempt.stage = Stage::Failed;
-                            m.attempt.error = Some("Import was interrupted before audio was saved. Import the original file again; no transcription was submitted.".into());
-                            if worker.store.insert(m).is_ok() {
-                                let _ = std::fs::remove_dir_all(&directory);
-                                changed(&app);
+        {
+            let state = app.state::<AppState>();
+            let _recovery_activity = state.worker_activity.read().await;
+            // Capture recovery is local-only; the owner explicitly starts processing.
+            let root = worker.store.root.join("audio");
+            if let Ok(entries) = std::fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    let directory = entry.path();
+                    if let Ok(bytes) = std::fs::read(directory.join("admission.json")) {
+                        if let Ok(m) = serde_json::from_slice::<Meeting>(&bytes) {
+                            if directory.file_name().and_then(|n| n.to_str()) == Some(&m.id) {
+                                let id = m.id.clone();
+                                if worker.store.recoverable(&id).unwrap_or(false) {
+                                    let _ = worker.store.insert(m);
+                                    changed(&app);
+                                }
+                                let _ = worker.store.cleanup_capture_working_files(&id);
                             }
                         }
+                        continue;
                     }
-                    continue;
+                    if let Ok(bytes) = std::fs::read(directory.join("import.pending")) {
+                        if let Ok(mut m) = serde_json::from_slice::<Meeting>(&bytes) {
+                            if directory.file_name().and_then(|n| n.to_str()) == Some(&m.id)
+                                && worker.store.recoverable(&m.id).unwrap_or(false)
+                            {
+                                m.attempt.stage = Stage::Failed;
+                                m.attempt.error = Some("Import was interrupted before audio was saved. Import the original file again; no transcription was submitted.".into());
+                                if worker.store.insert(m).is_ok() {
+                                    let _ = std::fs::remove_dir_all(&directory);
+                                    changed(&app);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    let Ok(bytes) = std::fs::read(directory.join("capture.json")) else {
+                        continue;
+                    };
+                    let Ok(journal) = serde_json::from_slice::<super::capture::Journal>(&bytes)
+                    else {
+                        continue;
+                    };
+                    if crate::domain::valid_id(&journal.id).is_err()
+                        || directory.file_name().and_then(|n| n.to_str()) != Some(&journal.id)
+                        || !worker.store.recoverable(&journal.id).unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    if directory.join("discard").exists() {
+                        let _ = std::fs::remove_dir_all(&directory);
+                        continue;
+                    }
+                    if !journal.ready
+                        || !journal.elapsed.is_finite()
+                        || !(0.0..=MAX_SECONDS).contains(&journal.elapsed)
+                        || journal.tracks.is_empty()
+                        || journal.tracks.len() > 2
+                        || journal.tracks.iter().any(|t| {
+                            !["microphone.f32", "system.f32"].contains(&t.filename.as_str())
+                                || !(8000..=96000).contains(&t.rate)
+                                || !(1..=2).contains(&t.channels)
+                        })
+                    {
+                        continue;
+                    }
+                    let state = app.state::<AppState>();
+                    let Ok(assets) =
+                        media::finalize_capture(&state.media, &directory, &journal).await
+                    else {
+                        continue;
+                    };
+                    let mut meeting =
+                        Meeting::new("Recovered meeting".into(), SourceKind::Recording, None);
+                    meeting.id = journal.id;
+                    meeting.added_at = journal.created.clone();
+                    meeting.call_at = journal.created;
+                    meeting.duration = Some(journal.elapsed);
+                    meeting.capture_warning = journal.warning;
+
+                    meeting.audio = Some(Audio {
+                        download: "prepared.m4a".into(),
+                        prepared: Some("prepared.m4a".into()),
+                        assets,
+                    });
+                    meeting.attempt.stage = Stage::Recovered;
+                    meeting.attempt.error = Some("Recovered partial recording. Review its audio, then choose Re-transcribe to process it.".into());
+                    let saved_id = meeting.id.clone();
+                    if worker.store.insert(meeting).is_ok() {
+                        let _ = worker.store.cleanup_capture_working_files(&saved_id);
+                        changed(&app);
+                    }
                 }
-                let Ok(bytes) = std::fs::read(directory.join("capture.json")) else {
-                    continue;
-                };
-                let Ok(journal) = serde_json::from_slice::<super::capture::Journal>(&bytes) else {
-                    continue;
-                };
-                if crate::domain::valid_id(&journal.id).is_err()
-                    || directory.file_name().and_then(|n| n.to_str()) != Some(&journal.id)
-                    || !worker.store.recoverable(&journal.id).unwrap_or(false)
-                {
-                    continue;
-                }
-                if directory.join("discard").exists() {
-                    let _ = std::fs::remove_dir_all(&directory);
-                    continue;
-                }
-                if !journal.ready
-                    || !journal.elapsed.is_finite()
-                    || !(0.0..=MAX_SECONDS).contains(&journal.elapsed)
-                    || journal.tracks.is_empty()
-                    || journal.tracks.len() > 2
-                    || journal.tracks.iter().any(|t| {
-                        !["microphone.f32", "system.f32"].contains(&t.filename.as_str())
-                            || !(8000..=96000).contains(&t.rate)
-                            || !(1..=2).contains(&t.channels)
-                    })
-                {
-                    continue;
-                }
-                let state = app.state::<AppState>();
-                if media::mix_capture(&state.media, &directory, &journal)
-                    .await
-                    .is_err()
-                {
-                    continue;
-                }
-                let mut meeting =
-                    Meeting::new("Recovered meeting".into(), SourceKind::Recording, None);
-                meeting.id = journal.id;
-                meeting.added_at = journal.created.clone();
-                meeting.call_at = journal.created;
-                meeting.duration = Some(journal.elapsed);
-                meeting.capture_warning = journal.warning;
-                let mut assets: Vec<_> = journal.tracks.into_iter().map(|t| t.filename).collect();
-                assets.push("prepared.m4a".into());
-                meeting.audio = Some(Audio {
-                    download: "prepared.m4a".into(),
-                    prepared: Some("prepared.m4a".into()),
-                    assets,
-                });
-                meeting.attempt.stage = Stage::Recovered;
-                meeting.attempt.error = Some("Recovered partial recording. Review its audio, then choose Re-transcribe to process it.".into());
-                let _ = worker.store.insert(meeting);
-                changed(&app);
             }
         }
         loop {

@@ -4,10 +4,10 @@ import path from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 let driver;let updateServer;
-const isolated = process.env.XTALK_E2E_UPDATES==='1' || process.env.XTALK_E2E_STOP==='1' || process.env.XTALK_E2E_OFFLINE==='1';
+const isolated = process.env.XTALK_E2E_MEETING_RECOVERY==='1' || process.env.XTALK_E2E_UPDATES==='1' || process.env.XTALK_E2E_STOP==='1' || process.env.XTALK_E2E_OFFLINE==='1';
 export const config = {
  hostname: '127.0.0.1', port: 4444, logLevel: 'warn', maxInstances: 1,
- specs: process.env.XTALK_E2E_UPDATES==='1'?['./updates.mjs']:process.env.XTALK_E2E_OFFLINE==='1'?['./offline.mjs','./glass.mjs','./shortcuts.mjs','./meetings.mjs']:process.env.XTALK_E2E_STOP==='1'?['./smoke.mjs','./meeting-recording.mjs','./recording.mjs','./realtime.mjs','./diagnostics.mjs','./sounds.mjs','./progress.mjs','./interface.mjs','./shortcuts.mjs','./quit-idle.mjs','./quit-stop.mjs','./quit-discard.mjs','./quit-realtime-stop.mjs','./quit-realtime-discard.mjs']:['./smoke.mjs'], framework: 'mocha', reporters: ['spec'],
+ specs: process.env.XTALK_E2E_MEETING_RECOVERY==='1'?['./meeting-recovery.mjs']:process.env.XTALK_E2E_UPDATES==='1'?['./updates.mjs']:process.env.XTALK_E2E_OFFLINE==='1'?['./offline.mjs','./glass.mjs','./shortcuts.mjs','./meetings.mjs']:process.env.XTALK_E2E_STOP==='1'?['./smoke.mjs','./meeting-recording.mjs','./recording.mjs','./realtime.mjs','./diagnostics.mjs','./sounds.mjs','./progress.mjs','./interface.mjs','./shortcuts.mjs','./quit-idle.mjs','./quit-stop.mjs','./quit-discard.mjs','./quit-realtime-stop.mjs','./quit-realtime-discard.mjs']:['./smoke.mjs'], framework: 'mocha', reporters: ['spec'],
  capabilities: [{ 'tauri:options': { application: path.resolve(process.env.XTALK_APP_PATH || 'src-tauri/target/debug/x-talk.exe') } }],
  mochaOpts: { timeout: 120000 },
  beforeSession() {
@@ -20,6 +20,13 @@ export const config = {
    const capture=randomUUID();
    writeFileSync(path.join(audio,`${capture}.journal`),'{incomplete');
    writeFileSync(path.join(audio,`${capture}.wav.part`),'preserved interrupted capture');
+  }
+  if(process.env.XTALK_E2E_MEETING_RECOVERY==='1') {
+   const id=randomUUID(),directory=path.join(data,'meetings','audio',id);
+   mkdirSync(directory,{recursive:true});mkdirSync('.tmp',{recursive:true});
+   writeFileSync(path.join(directory,'microphone.f32'),Buffer.alloc(16000*4*5));
+   writeFileSync(path.join(directory,'capture.json'),JSON.stringify({id,created:new Date().toISOString(),tracks:[{filename:'microphone.f32',rate:16000,channels:1,microphone:true}],elapsed:5,ready:true,discarded:false,warning:'Synthetic recovery warning'}));
+   writeFileSync('.tmp/meeting-recovery-profile.json',JSON.stringify({id,directory}));
   }
   if(process.env.XTALK_E2E_UPDATES==='1') {
    mkdirSync('.tmp',{recursive:true});writeFileSync('.tmp/update-mode','unavailable');

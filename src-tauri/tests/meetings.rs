@@ -463,3 +463,86 @@ async fn terminal_provider_job_requires_explicit_new_submission() {
         2
     );
 }
+
+#[test]
+fn raw_capture_cleanup_waits_for_durable_compact_admission_and_is_repeatable() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MeetingStore::open(dir.path()).unwrap();
+    let mut meeting = fixture();
+    meeting.source = SourceKind::Recording;
+    let directory = store.audio_path(&meeting.id, "microphone.f32").unwrap();
+    std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+    std::fs::write(&directory, b"raw recovery evidence").unwrap();
+    assert!(store.cleanup_capture_working_files(&meeting.id).is_err());
+    assert!(directory.exists());
+    for name in ["prepared.m4a", "microphone.m4a"] {
+        std::fs::write(
+            store.audio_path(&meeting.id, name).unwrap(),
+            b"saved compact audio",
+        )
+        .unwrap();
+    }
+    meeting.audio = Some(Audio {
+        download: "prepared.m4a".into(),
+        prepared: Some("prepared.m4a".into()),
+        assets: vec!["prepared.m4a".into(), "microphone.m4a".into()],
+    });
+    store.insert(meeting.clone()).unwrap();
+    // Simulate a crash immediately after admission, before raw-file cleanup.
+    drop(store);
+    let store = MeetingStore::open(dir.path()).unwrap();
+    store.cleanup_capture_working_files(&meeting.id).unwrap();
+    store.cleanup_capture_working_files(&meeting.id).unwrap();
+    assert!(!directory.exists());
+    assert!(store
+        .audio_path(&meeting.id, "microphone.m4a")
+        .unwrap()
+        .exists());
+    assert!(store.get(&meeting.id).unwrap().audio.is_some());
+}
+
+#[test]
+fn lightweight_library_metadata_tracks_edits_and_upgrades_older_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MeetingStore::open(dir.path()).unwrap();
+    let meeting = fixture();
+    store.insert(meeting.clone()).unwrap();
+    assert_eq!(store.summaries().unwrap()[0].speakers, 3);
+    let edited = store
+        .edit(&meeting.id, 0, |m| {
+            m.merge("A", "B")?;
+            m.title = "Quoted \"meeting\"\nreview".into();
+            Ok(())
+        })
+        .unwrap();
+    let summary = store.summaries().unwrap().remove(0);
+    assert_eq!(summary.speakers, 2);
+    assert_eq!(summary.title, edited.title);
+    assert_eq!(summary.revision, edited.revision);
+    drop(store);
+    // An earlier preview saved the same domain document without a list cache.
+    let db = rusqlite::Connection::open(dir.path().join("meetings.sqlite3")).unwrap();
+    let plan: String = db.query_row("EXPLAIN QUERY PLAN SELECT id,json_extract(document,'$._list') FROM meetings ORDER BY added_at DESC,id DESC", [], |row| row.get(3)).unwrap();
+    assert!(
+        plan.contains("meetings_list_summary"),
+        "Library reads must use the metadata index: {plan}"
+    );
+    db.execute(
+        "UPDATE meetings SET document=?1 WHERE id=?2",
+        rusqlite::params![serde_json::to_string(&edited).unwrap(), edited.id],
+    )
+    .unwrap();
+    drop(db);
+    let store = MeetingStore::open(dir.path()).unwrap();
+    let upgraded = store.summaries().unwrap().remove(0);
+    assert_eq!(upgraded.revision, edited.revision);
+    assert_eq!(upgraded.title, edited.title);
+    assert_eq!(upgraded.speakers, 2);
+    let exported: serde_json::Value =
+        serde_json::from_str(&export::json(&store.get(&edited.id).unwrap()).unwrap()).unwrap();
+    assert!(exported.get("_list").is_none());
+    assert_eq!(
+        exported["transcript"]["turns"].as_array().unwrap().len(),
+        edited.transcript.unwrap().turns.len()
+    );
+}

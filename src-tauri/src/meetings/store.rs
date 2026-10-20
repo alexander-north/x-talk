@@ -54,6 +54,16 @@ fn read(db: &Connection, id: &str) -> Result<Meeting> {
         AppError::input("This meeting was deleted or does not exist.")
     })?)?)
 }
+fn document(meeting: &Meeting) -> Result<String> {
+    let mut document = serde_json::to_string(meeting)?;
+    // Derived list metadata is ignored when deserializing the full domain record.
+    // Build both from the same revision, without another transcript-sized Value tree.
+    document.truncate(document.len() - 1);
+    document.push_str(",\"_list\":");
+    document.push_str(&serde_json::to_string(&Summary::from_meeting(meeting)?)?);
+    document.push('}');
+    Ok(document)
+}
 fn write(db: &Connection, meeting: &Meeting) -> Result<()> {
     db.execute(
         "UPDATE meetings SET revision=?2, document=?3 WHERE id=?1",
@@ -61,7 +71,7 @@ fn write(db: &Connection, meeting: &Meeting) -> Result<()> {
             meeting.id,
             i64::try_from(meeting.revision)
                 .map_err(|_| AppError::input("Meeting revision overflow."))?,
-            serde_json::to_string(meeting)?
+            document(meeting)?
         ],
     )?;
     Ok(())
@@ -88,8 +98,20 @@ impl MeetingStore {
             tx.execute_batch(include_str!("../../migrations/meetings/001.sql"))?;
             tx.commit()?;
         }
+        // Expression indexes keep periodic jobs and library reads out of old
+        // transcript payloads. Safe additive upgrade for earlier local previews.
+        db.execute_batch("CREATE INDEX IF NOT EXISTS meetings_stage ON meetings(json_extract(document,'$.attempt.stage'),added_at);
+            CREATE INDEX IF NOT EXISTS meetings_audio_hash ON meetings(json_extract(document,'$.audio_hash')) WHERE json_extract(document,'$.audio_hash') IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS meetings_list_summary ON meetings(added_at DESC,id DESC,json_extract(document,'$._list'));
+            CREATE INDEX IF NOT EXISTS meetings_retained ON meetings(added_at DESC,id DESC,json_extract(document,'$.attempt.stage')) WHERE json_extract(document,'$.audio') IS NOT NULL;")?;
         db.execute("DELETE FROM audio_leases", [])?;
-        for mut m in list(&db)? {
+        let recoveries = {
+            let mut statement = db.prepare("SELECT document FROM meetings WHERE json_extract(document,'$.attempt.stage') IN ('submitting','preparing','briefing')")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.map(|row| Ok(serde_json::from_str::<Meeting>(&row?)?))
+                .collect::<Result<Vec<_>>>()?
+        };
+        for mut m in recoveries {
             let old_stage = m.attempt.stage.clone();
             m.attempt.recovery();
             if m.attempt.stage != old_stage {
@@ -142,6 +164,23 @@ impl MeetingStore {
     pub fn list(&self) -> Result<Vec<Meeting>> {
         self.call(|db| list(db))
     }
+    pub fn summaries(&self) -> Result<Vec<Summary>> {
+        self.call(|db| {
+            let rows = {
+                let mut statement = db.prepare("SELECT id,json_extract(document,'$._list') FROM meetings ORDER BY added_at DESC,id DESC")?;
+                let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            rows.into_iter().map(|(id, cached)| {
+                if let Some(summary) = cached.and_then(|json| serde_json::from_str::<Summary>(&json).ok()) { return Ok(summary); }
+                // Older previews are upgraded lazily, one document at a time.
+                let meeting = read(db, &id)?;
+                let summary = Summary::from_meeting(&meeting)?;
+                write(db, &meeting)?;
+                Ok(summary)
+            }).collect()
+        })
+    }
     pub fn pending(&self) -> Result<Vec<Meeting>> {
         self.call(|db| {
             let mut stmt = db.prepare("SELECT document FROM meetings WHERE json_extract(document,'$.attempt.stage') IN ('queued','waiting_for_keys','polling') ORDER BY added_at")?;
@@ -184,8 +223,9 @@ impl MeetingStore {
             )?;
         }
         self.call(move |db| {
-            if meeting.audio_hash.is_some() && list(db)?.iter().any(|m| m.audio_hash == meeting.audio_hash) {
-                return Err(AppError::input("This audio is already in Meetings. Open the existing meeting to review or re-transcribe it."));
+            if let Some(hash) = &meeting.audio_hash {
+                let duplicate: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM meetings WHERE json_extract(document,'$.audio_hash')=?1)", [hash], |row| row.get(0))?;
+                if duplicate { return Err(AppError::input("This audio is already in Meetings. Open the existing meeting to review or re-transcribe it.")); }
             }
             db.execute(
                 "INSERT INTO meetings VALUES(?1,?2,?3,?4)",
@@ -194,7 +234,7 @@ impl MeetingStore {
                     meeting.added_at,
                     i64::try_from(meeting.revision)
                         .map_err(|_| AppError::input("Meeting revision overflow."))?,
-                    serde_json::to_string(&meeting)?
+                    document(&meeting)?
                 ],
             )?;
             Ok(())
@@ -279,6 +319,47 @@ impl MeetingStore {
             id: id.into(),
         })
     }
+    /// Remove raw capture scratch only after compact source assets are admitted.
+    /// Repeating this after restart closes the commit/cleanup crash window.
+    pub fn cleanup_capture_working_files(&self, id: &str) -> Result<()> {
+        let meeting = self.get(id)?;
+        let Some(audio) = meeting.audio else {
+            return Ok(());
+        };
+        if meeting.source != SourceKind::Recording
+            || !audio.assets.iter().any(|name| name == "prepared.m4a")
+            || audio.assets.iter().any(|name| name.ends_with(".f32"))
+            || !audio
+                .assets
+                .iter()
+                .any(|name| name == "microphone.m4a" || name == "system.m4a")
+        {
+            return Ok(());
+        }
+        for asset in &audio.assets {
+            if !self.audio_path(id, asset)?.is_file() {
+                return Ok(());
+            }
+        }
+        for (raw, compact) in [
+            ("microphone.f32", "microphone.m4a"),
+            ("system.f32", "system.m4a"),
+        ] {
+            if self.audio_path(id, raw)?.exists()
+                && !audio.assets.iter().any(|name| name == compact)
+            {
+                return Ok(());
+            }
+        }
+        for filename in ["microphone.f32", "system.f32"] {
+            match std::fs::remove_file(self.audio_path(id, filename)?) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
     pub fn retention(&self) -> Result<Option<u32>> {
         self.call(|db| {
             Ok(
@@ -308,23 +389,23 @@ impl MeetingStore {
                     r.get(0)
                 })?;
             if let Some(keep) = keep {
-                for (index, mut m) in list(&tx)?
-                    .into_iter()
-                    .filter(|m| m.audio.is_some())
-                    .enumerate()
-                {
-                    if index < keep as usize || m.attempt.protects_audio() {
-                        continue;
-                    }
+                let candidates = {
+                    let mut statement = tx.prepare("SELECT id,json_extract(document,'$.attempt.stage') FROM meetings WHERE json_extract(document,'$.audio') IS NOT NULL ORDER BY added_at DESC,id DESC")?;
+                    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+                    rows.collect::<std::result::Result<Vec<_>, _>>()?
+                };
+                for (index, (id, stage)) in candidates.into_iter().enumerate() {
+                    if index < keep as usize || stage != "complete" { continue; }
                     let leased: bool = tx.query_row(
                         "SELECT EXISTS(SELECT 1 FROM audio_leases WHERE id=?1)",
-                        [&m.id],
+                        [&id],
                         |r| r.get(0),
                     )?;
                     if leased {
                         continue;
                     }
-                    tx.execute("INSERT OR IGNORE INTO file_gc VALUES(?1)", [&m.id])?;
+                    tx.execute("INSERT OR IGNORE INTO file_gc VALUES(?1)", [&id])?;
+                    let mut m = read(&tx, &id)?;
                     m.audio = None;
                     m.revision += 1;
                     write(&tx, &m)?;

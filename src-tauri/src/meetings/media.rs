@@ -219,3 +219,74 @@ pub async fn mix_capture(
         .sync_all()?;
     Ok(())
 }
+
+/// Keep compact source tracks after capture while retaining raw journals until
+/// the caller has durably admitted every output to the meeting store.
+#[cfg(feature = "desktop")]
+pub async fn finalize_capture(
+    tools: &Ffmpeg,
+    directory: &Path,
+    journal: &super::capture::Journal,
+) -> Result<Vec<String>> {
+    mix_capture(tools, directory, journal).await?;
+    let mut assets = vec!["prepared.m4a".to_string()];
+    for track in &journal.tracks {
+        let filename = if track.microphone {
+            "microphone.m4a"
+        } else {
+            "system.m4a"
+        };
+        tools
+            .run(
+                &tools.ffmpeg,
+                &[
+                    "-nostdin".into(),
+                    "-v".into(),
+                    "error".into(),
+                    "-f".into(),
+                    "f32le".into(),
+                    "-ar".into(),
+                    track.rate.to_string().into(),
+                    "-ac".into(),
+                    track.channels.to_string().into(),
+                    "-i".into(),
+                    directory.join(&track.filename).into_os_string(),
+                    "-t".into(),
+                    format!("{:.6}", journal.elapsed).into(),
+                    "-map_metadata".into(),
+                    "-1".into(),
+                    "-af".into(),
+                    "apad".into(),
+                    "-ar".into(),
+                    "48000".into(),
+                    "-c:a".into(),
+                    "aac".into(),
+                    "-b:a".into(),
+                    "128k".into(),
+                    "-threads".into(),
+                    "2".into(),
+                    "-f".into(),
+                    "ipod".into(),
+                    "-y".into(),
+                    directory.join(filename).into_os_string(),
+                ],
+                Duration::from_secs(4 * 3600),
+            )
+            .await?;
+        let info = inspect(tools, &directory.join(filename)).await?;
+        if info.video
+            || info.channels != track.channels as u32
+            || (info.duration - journal.elapsed).abs() > 1.0
+        {
+            return Err(AppError::input(
+                "Saved source audio does not match the recording. Raw recovery audio is preserved.",
+            ));
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(directory.join(filename))?
+            .sync_all()?;
+        assets.push(filename.into());
+    }
+    Ok(assets)
+}

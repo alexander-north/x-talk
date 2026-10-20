@@ -100,3 +100,83 @@ async fn four_hour_meeting_preparation_retains_the_complete_timeline() {
         info.duration, info.channels
     );
 }
+
+#[cfg(feature = "desktop")]
+async fn check_capture_archive(seconds: u64) {
+    use x_talk::meetings::{
+        capture::{Journal, Track},
+        media::finalize_capture,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let tracks = vec![
+        Track {
+            filename: "microphone.f32".into(),
+            rate: 16000,
+            channels: 1,
+            microphone: true,
+        },
+        Track {
+            filename: "system.f32".into(),
+            rate: 48000,
+            channels: 2,
+            microphone: false,
+        },
+    ];
+    let mut raw_bytes = 0;
+    for track in &tracks {
+        let mut file = std::fs::File::create(dir.path().join(&track.filename)).unwrap();
+        let length = seconds * track.rate as u64 * track.channels as u64 * 4;
+        file.set_len(length).unwrap();
+        let tone: Vec<u8> = (0..track.rate)
+            .flat_map(|n| {
+                let value = (n as f32 * 0.17).sin() * 0.1;
+                (0..track.channels).flat_map(move |_| value.to_le_bytes())
+            })
+            .collect();
+        for offset in [0, length - tone.len() as u64] {
+            file.seek(SeekFrom::Start(offset)).unwrap();
+            file.write_all(&tone).unwrap();
+        }
+        raw_bytes += length;
+    }
+    let journal = Journal {
+        id: x_talk::domain::id(),
+        created: x_talk::domain::now(),
+        tracks,
+        elapsed: seconds as f64,
+        ready: true,
+        discarded: false,
+        warning: None,
+    };
+    let assets = finalize_capture(&tools(), dir.path(), &journal)
+        .await
+        .unwrap();
+    assert_eq!(assets, ["prepared.m4a", "microphone.m4a", "system.m4a"]);
+    let mut archived_bytes = 0;
+    for asset in &assets {
+        let info = inspect(&tools(), &dir.path().join(asset)).await.unwrap();
+        assert!(!info.video);
+        assert!((info.duration - seconds as f64).abs() < 0.1);
+        assert_eq!(info.channels, if asset == "microphone.m4a" { 1 } else { 2 });
+        archived_bytes += std::fs::metadata(dir.path().join(asset)).unwrap().len();
+    }
+    for track in &journal.tracks {
+        assert!(
+            dir.path().join(&track.filename).exists(),
+            "Recovery inputs must remain until admission"
+        );
+    }
+    assert!(archived_bytes < raw_bytes / 2);
+    println!("Capture archive: {seconds}s, {raw_bytes} raw bytes, {archived_bytes} retained bytes; mono/stereo and timeline preserved.");
+}
+#[cfg(feature = "desktop")]
+#[tokio::test]
+async fn compact_capture_assets_preserve_sources_and_recovery_inputs() {
+    check_capture_archive(5).await;
+}
+#[cfg(feature = "desktop")]
+#[tokio::test]
+#[ignore = "long local capture-archive acceptance; no microphone or providers"]
+async fn two_hour_capture_archive_preserves_the_complete_timeline() {
+    check_capture_archive(7200).await;
+}

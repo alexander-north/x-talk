@@ -187,6 +187,54 @@ pub struct Meeting {
     pub capture_warning: Option<String>,
     pub attempt: Attempt,
 }
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Summary {
+    pub id: String,
+    pub title: String,
+    pub added_at: String,
+    pub duration: Option<f64>,
+    pub status: Stage,
+    pub preview: Option<String>,
+    pub speakers: usize,
+    pub audio_available: bool,
+    pub revision: u64,
+}
+impl Summary {
+    pub fn from_meeting(meeting: &Meeting) -> Result<Self> {
+        let speakers = match &meeting.transcript {
+            Some(transcript) => transcript
+                .turns
+                .iter()
+                .map(|turn| {
+                    transcript.resolve(
+                        transcript
+                            .corrections
+                            .get(&turn.id)
+                            .and_then(|edit| edit.speaker.as_deref())
+                            .unwrap_or(&turn.speaker),
+                    )
+                })
+                .collect::<Result<BTreeSet<_>>>()?
+                .len(),
+            None => 0,
+        };
+        Ok(Self {
+            id: meeting.id.clone(),
+            title: meeting.title.clone(),
+            added_at: meeting.added_at.clone(),
+            duration: meeting.duration,
+            status: meeting.attempt.stage.clone(),
+            preview: meeting
+                .brief
+                .content
+                .as_ref()
+                .map(|brief| brief.summary.clone()),
+            speakers,
+            audio_available: meeting.audio.is_some(),
+            revision: meeting.revision,
+        })
+    }
+}
 impl Meeting {
     pub fn new(title: String, source: SourceKind, filename: Option<String>) -> Self {
         let added_at = now();
