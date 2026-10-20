@@ -1,0 +1,20 @@
+SPEC.md
+  s_b7d8957ea62ed3::t_ba47adc8f5663b 3,5,86-95
+  s_b7d8957ea62ed3::t_7ac833006c73a7 96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "373aa27a9965fe15904f46608fdea3a60e437357",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
