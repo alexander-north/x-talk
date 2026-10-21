@@ -1,0 +1,82 @@
+src-tauri/src/meetings/capture.rs
+  s_b7d8957ea62ed3::t_154859c63b3748 23,62,104-112,454-456,547-549,576-577,580-582,660-663,683-685,758-759,908-911
+  s_b7d8957ea62ed3::t_c26f3a7b0a86cb 578-579,912
+src/components/meetings/MeetingCapture.svelte
+  s_b7d8957ea62ed3::t_154859c63b3748 25,40,47,70
+tests/e2e/meeting-recording.mjs
+  s_b7d8957ea62ed3::t_9a08ce2ddb97a4 45
+  s_b7d8957ea62ed3::t_8bd5559a5131f9 46
+src/glass.css
+  s_b7d8957ea62ed3::t_3bac353e303d42 122-123
+src-tauri/tests/meetings.rs
+  s_b7d8957ea62ed3::t_428d4c5039cdcf 725-730
+  s_b7d8957ea62ed3::t_4231f3e9fad0ec 83-89,113,209,274,569,572,656-724,731-757
+docs/RELEASE_NOTES.md
+  s_b7d8957ea62ed3::t_d703fb78b05f29 3
+  s_b7d8957ea62ed3::t_d69839babf9d38 1-2,4
+src/components/meetings/MeetingImport.svelte
+  s_b7d8957ea62ed3::t_fd3a6f73651f71 9,12,27
+src/components/GlassOrb.svelte
+  s_b7d8957ea62ed3::t_154859c63b3748 6,27
+src-tauri/src/spectrum.rs
+  s_b7d8957ea62ed3::t_154859c63b3748 74-83,101-109
+  s_b7d8957ea62ed3::t_e0458377ac8029 110
+src/meetings/ipc.ts
+  s_b7d8957ea62ed3::t_154859c63b3748 3,5
+  s_b7d8957ea62ed3::t_fd3a6f73651f71 8-9,11,14,33,40-41
+src/orb-art.ts
+  s_b7d8957ea62ed3::t_154859c63b3748 51-52,57
+src-tauri/src/meetings/export.rs
+  s_b7d8957ea62ed3::t_fd3a6f73651f71 50,138,148,150-160,162-212
+  s_b7d8957ea62ed3::t_f762e1c87f792a 161
+src-tauri/src/meetings/domain.rs
+  s_b7d8957ea62ed3::t_fd3a6f73651f71 79,184-196,198-205,207-215,223-224,242-243,279,300
+  s_b7d8957ea62ed3::t_428d4c5039cdcf 315-335,493,497,501
+  s_b7d8957ea62ed3::t_7459a9cdfa2ab2 80,183,197,206,494-496,498-500
+tests/e2e/meetings.mjs
+  s_b7d8957ea62ed3::t_9a08ce2ddb97a4 21,25
+  s_b7d8957ea62ed3::t_cf7eabd755f7d9 33,270-288
+src-tauri/src/meetings/commands.rs
+  s_b7d8957ea62ed3::t_428d4c5039cdcf 316
+  s_b7d8957ea62ed3::t_fd3a6f73651f71 131,175,310,348,352,724
+  s_b7d8957ea62ed3::t_35415c8bac42cd 846
+src/components/meetings/Meetings.svelte
+  s_b7d8957ea62ed3::t_fd3a6f73651f71 4,45,69,91,103,117
+  s_b7d8957ea62ed3::t_b9687cd7843c7a 142
+SPEC.md
+  s_b7d8957ea62ed3::t_f4f8c0710ccc50 59,78-81,86-87,89-90,95-96
+package-lock.json
+  s_b7d8957ea62ed3::t_6ea8793be155a2 3,9
+package.json
+  s_b7d8957ea62ed3::t_310eab0459f005 3
+src-tauri/Cargo.lock
+  s_b7d8957ea62ed3::t_2702f2cc0651ae 6292
+src-tauri/Cargo.toml
+  s_b7d8957ea62ed3::t_e159a3ce22d265 3
+src-tauri/src/meetings/providers.rs
+  s_b7d8957ea62ed3::t_0a1862f511c128 250-251,262,266,273,283-299
+src-tauri/src/test_support.rs
+  s_b7d8957ea62ed3::t_fdce177259c326 37,43-47
+src-tauri/tauri.conf.json
+  s_b7d8957ea62ed3::t_95153d1f38ff42 4
+src-tauri/tests/meeting_capture.rs
+  s_b7d8957ea62ed3::t_64ec118b253f9b 239,245-247,250,252,280,282-286,289,291,293-297,305-329
+src/orb-art.test.ts
+  s_b7d8957ea62ed3::t_7c1b4713c336f6 3-5,10,13-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "216541db1aa928ade78f40515fad3f68bf873434",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
