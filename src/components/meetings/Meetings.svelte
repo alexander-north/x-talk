@@ -1,13 +1,14 @@
 <script lang="ts">
  import {onMount} from 'svelte';
  import {listen} from '@tauri-apps/api/event';
- import {meetings,stageLabel,type Summary,type View,type ImportPreview,type Edit,type Evidence} from '../../meetings/ipc';
+ import {meetings,stageLabel,type Summary,type View,type Edit,type Evidence} from '../../meetings/ipc';
  import {api,duration,message} from '../../ipc';
+ import MeetingImport from './MeetingImport.svelte';
+ let importing=$state(false);
  import Icon from '../Icon.svelte';
- let rows=$state<Summary[]>([]), selected=$state<View|null>(null), preview=$state<ImportPreview|null>(null);
+ let rows=$state<Summary[]>([]), selected=$state<View|null>(null);
  let search=$state(''), filter=$state(''), speakerFilter=$state(''), original=$state(false);
  let tab=$state('brief'), busy=$state(false), error=$state(''), notice=$state('');
- let retain=$state<number|null>(50), retentionChoice=$state('50');
  let title=$state(''), callAt=$state('');
  let editTurn=$state(''), editText=$state(''), editSpeaker=$state('');
  let mergeFrom=$state(''), mergeInto=$state('');
@@ -51,9 +52,10 @@
     }catch{/* A removed meeting returns to the library. */}
    }
    restored=true;remember();
-  })();void meetings.retention().then(v=>{retain=v;retentionChoice=v===null?'unlimited':String(v);}).catch(e=>error=message(e));
+  })();
   const subscription=listen('meetings-changed',load);
-  return()=>{readVersion++;void subscription.then(f=>f());};
+  let polling=false;const timer=setInterval(async()=>{if(polling||!rows.some(row=>['importing','queued','preparing','submitting','polling','briefing'].includes(row.status)))return;polling=true;try{await load();}finally{polling=false;}},1500);
+  return()=>{clearInterval(timer);readVersion++;void subscription.then(f=>f());};
  });
 </script>
 <main class="meetings-page">
@@ -61,21 +63,16 @@
  {#if notice}<p class="meeting-notice" role="status">{notice}</p>{/if}
  {#if !current}
   <div class="page-heading"><div><p class="eyebrow">ROOM FOR EVERY VOICE</p><h1>Meetings <span class="count">{rows.length}</span></h1><p class="muted">The conversation, the people, and what comes next.</p></div>
-   <button class="primary" disabled={busy} onclick={()=>run(async()=>{preview=await meetings.pick();})}><Icon name="upload" size={17}/>Import recording</button>
+   <button class="primary" disabled={busy} onclick={()=>importing=true}><Icon name="upload" size={17}/>Import recording</button>
   </div>
-  {#if preview}<section class="meeting-panel import-preview"><h2>{preview.filename}</h2><p>{duration(preview.inspection.duration)} · {preview.inspection.channels===2?'Stereo':'Mono'} audio</p>
-   {#if preview.inspection.video}<p>Only extracted audio will be saved. The video stays in its original location.</p>{/if}
-   {#if preview.inspection.audio_streams>1}<p class="banner">This file contains {preview.inspection.audio_streams} audio tracks. Only the first audio track will be imported; the others will be omitted.</p>{/if}
-   <div class="actions"><button disabled={busy} onclick={()=>preview=null}>Cancel</button><button class="primary" disabled={busy} onclick={()=>run(async()=>{const id=await meetings.import(preview!.token);preview=null;selected=await meetings.get(id);title=selected.meeting.title;callAt=selected.meeting.call_at;})}>{busy?'Saving audio…':'Import and transcribe'}</button></div>
-  </section>{/if}
-  <div class="table-toolbar"><label class="search-field"><Icon name="search" size={17}/><input aria-label="Search meetings" placeholder="Search titles and briefs…" bind:value={search}/></label>
-   <details class="meeting-retention"><summary>Audio retention</summary><label>Recordings to keep<input aria-label="Meeting audio retention" bind:value={retentionChoice} placeholder="50 or unlimited"/></label><p class="help">Keep the latest N recordings, or enter unlimited. Text and briefs stay.</p><button disabled={busy} onclick={()=>run(async()=>{const n=retentionChoice.trim().toLowerCase()==='unlimited'?null:Number(retentionChoice);if(n!==null&&(!Number.isInteger(n)||n<1))throw new Error('Enter a positive number or unlimited.');await meetings.setRetention(n);retain=n;},'Audio retention saved')}>Save</button><small>Currently {retain===null?'unlimited':retain} recordings</small></details>
-  </div>
+  <div class="table-toolbar"><label class="search-field"><Icon name="search" size={17}/><input aria-label="Search meetings" placeholder="Search titles and briefs…" bind:value={search}/></label></div>
   <div class="meeting-library">
    {#each filtered as row (row.id)}<article class="meeting-card">
-    <div class="meeting-card-heading"><button class="meeting-title" onclick={()=>open(row.id)}>{row.title}</button><span class="badge">{stageLabel(row.status)}</span></div>
-    <p class="recording-meta">{new Date(row.added_at).toLocaleString()} · {duration(row.duration??0)} · {row.speakers} speakers{#if !row.audio_available} · Audio not retained{/if}</p>
-    <div class="meeting-preview"><button class="text-preview" onclick={()=>open(row.id)}>{row.preview??'Your meeting brief will appear here.'}</button><button class="subtle-button" disabled={busy} onclick={()=>run(()=>meetings.copy(row.id),'Meeting JSON copied')}><Icon name="copy" size={15}/>Copy meeting JSON</button></div>
+    <div class="meeting-card-heading"><span class="badge">{stageLabel(row.status)}</span><button class="subtle-button" disabled={busy||['importing','queued','preparing','submitting','polling'].includes(row.status)} onclick={()=>run(()=>meetings.copy(row.id),'Meeting JSON copied')}><Icon name="copy" size={15}/>Copy meeting JSON</button></div>
+    <h2><button class="meeting-title" onclick={()=>open(row.id)}>{row.title}</button></h2>
+    <div class="meeting-preview"><button class="text-preview" onclick={()=>open(row.id)}>{row.preview??(row.status==='failed'?'Processing needs attention. Open this recording for details.':'Your transcript and meeting brief will appear here when processing finishes.')}</button></div>
+    <p class="recording-meta">{duration(row.duration??0)} · {row.speakers?`${row.speakers} speakers`:'Speakers pending'}{#if !row.audio_available&&!['importing','queued'].includes(row.status)} · Audio not retained{/if}</p>
+    <div class="card-bottom"><span>{new Date(row.call_at).toLocaleDateString()}</span><button class="subtle-button" onclick={()=>open(row.id)}>Open recording <span aria-hidden="true">↗</span></button></div>
    </article>
    {:else}<div class="empty"><Icon name="heart" size={32}/><h2>{search?'No meetings found':'Every conversation has a next step'}</h2><p>{search?'Try another search.':'Import an audio or video recording to create a transcript and meeting brief.'}</p></div>{/each}
   </div>
@@ -116,25 +113,25 @@
   {:else}
    <h2>Meeting details</h2><form onsubmit={e=>{e.preventDefault();void edit({kind:'metadata',title,call_at:callAt});}}><label>Title<input bind:value={title} maxlength="500" required/></label><label>Meeting date<input bind:value={callAt} required/></label><button disabled={busy}>Save details</button></form>
    <dl><dt>Source</dt><dd>{current.source}{current.filename?` · ${current.filename}`:''}</dd><dt>Audio</dt><dd>{current.audio_available?'Retained':'No longer retained; transcript and brief remain available'}</dd><dt>Transcription</dt><dd>{transcript?`${transcript.provider} · ${transcript.model??'Model not reported'}`:'Pending'}</dd><dt>Brief</dt><dd>{current.brief.provider} · {current.brief.actual_model??current.brief.model}</dd></dl>
-   <div class="actions"><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.play(current!.id))}>Play audio</button><button disabled={busy} onclick={()=>run(api.stopPlayback)}>Stop playback</button><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.download(current!.id),'Audio saved')}><Icon name="download" size={16}/>Download audio</button><button disabled={busy||!current.audio_available||!canRetry} onclick={()=>confirmation='retry'}>Re-transcribe</button><button class="danger" disabled={busy} onclick={()=>confirmation='delete'}>Delete meeting</button></div>
+   <div class="actions"><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.play(current!.id))}>Play audio</button><button disabled={busy} onclick={()=>run(api.stopPlayback)}>Stop playback</button><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.download(current!.id),'Audio saved')}><Icon name="download" size={16}/>Download audio</button><button disabled={busy||!current.audio_available||!canRetry} onclick={()=>confirmation='retry'}>Re-transcribe</button><button class="danger" disabled={busy||current.transcription_status==='importing'} onclick={()=>confirmation='delete'}>Delete meeting</button></div>
   {/if}
   </section>
  {/if}
+ {#if importing}<MeetingImport close={()=>importing=false} created={load}/>{/if}
  {#if confirmation&&current}<dialog class="modal" bind:this={dialog} oncancel={()=>confirmation=null} onclose={()=>confirmation=null} aria-labelledby="meeting-confirm-title"><h2 id="meeting-confirm-title">{confirmation==='delete'?'Delete this meeting?':confirmation==='retry'?'Re-transcribe this meeting?':'Merge these speakers?'}</h2><p>{confirmation==='delete'?'This deletes the saved transcript, brief, speaker edits and retained audio. Your imported source file is preserved.':confirmation==='retry'?'This may incur a provider charge. Existing results remain available until success. A successful replacement resets speaker names, merges and transcript corrections.':`${name(mergeFrom)} will be merged into ${name(mergeInto)} across the entire transcript. This marks the brief out of date.`}</p><div class="actions"><button onclick={()=>confirmation=null}>Cancel</button><button class="primary" disabled={busy} onclick={async()=>{let success=false;if(confirmation==='delete'){const id=current!.id,revision=current!.revision;success=await run(async()=>{await meetings.delete(id,revision);selected=null;});}else if(confirmation==='retry')success=!!await edit({kind:'retry',transcription:true});else success=!!await edit({kind:'merge',from:mergeFrom,into:mergeInto});if(success)confirmation=null;}}>Confirm</button></div></dialog>{/if}
 </main>
 <style>
  .meetings-page{padding:32px;max-width:1240px;margin:0 auto;width:100%;overflow:auto}
- .meetings-page h1{font-size:28px;margin:0}.meeting-library{display:grid;gap:16px;margin-top:20px}
+ .meetings-page h1{font-size:28px;margin:0}.meeting-library{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:20px;margin-top:20px}
  .meeting-card,.meeting-panel{border:1px solid var(--line);background:var(--surface);border-radius:18px;padding:24px}
- .meeting-card-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
- .meeting-title{border:0;background:transparent;padding:0;font-size:19px;text-align:left;font-weight:600}
- .meeting-preview{display:flex;align-items:flex-start;gap:20px;margin-top:18px}.meeting-preview .text-preview{flex:1;line-height:1.65}
+ .meeting-card-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+ .meeting-title{white-space:normal;overflow-wrap:anywhere;border:0;background:transparent;padding:0;font-size:19px;text-align:left;font-weight:600}
+ .meeting-card{min-width:0;display:flex;flex-direction:column;min-height:300px}.meeting-card h2{margin:20px 0 8px}.meeting-preview{flex:1;margin:8px 0 20px}.card-bottom{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--line);padding-top:16px;font-size:12px;color:var(--muted)}.meeting-preview .text-preview{flex:1;line-height:1.65}
  .meeting-tabs{display:flex;gap:8px;margin:20px 0;flex-wrap:wrap}.meeting-tabs button{border-radius:20px}.meeting-tabs .chosen{background:var(--accent-soft);font-weight:600}
  .meeting-summary{font-size:17px;line-height:1.8}.brief-item{padding:8px 0 12px;border-bottom:1px solid var(--line)}.brief-item p{margin:8px 0}
  .evidence-links{display:flex;gap:8px}.meeting-turn{padding:22px 16px;border-bottom:1px solid var(--line);scroll-margin:24px}
  .turn-text{white-space:pre-wrap;line-height:1.7}.meeting-panel h3{margin-top:28px}
  .speaker-row{display:flex;gap:16px;align-items:end;padding:16px 0}.speaker-row label{flex:1}.speaker-row small{padding-bottom:10px}
- .meeting-retention{position:relative;max-width:300px}.meeting-retention small{display:block;padding:8px}
  .meeting-panel label{display:block;margin:12px 0}.meeting-panel input,.meeting-panel textarea{width:100%}.meeting-panel select{max-width:250px}
  .meeting-panel dl{display:grid;grid-template-columns:120px 1fr;gap:16px;margin:28px 0}.meeting-panel dd{margin:0}
  .meeting-notice{color:var(--accent);margin:0 0 12px}

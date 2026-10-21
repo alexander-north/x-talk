@@ -88,6 +88,7 @@ pub struct BriefContent {
 pub enum Stage {
     #[default]
     Queued,
+    Importing,
     Preparing,
     WaitingForKeys,
     Submitting,
@@ -156,7 +157,11 @@ impl Attempt {
         !matches!(self.stage, Stage::Complete)
     }
     pub fn recovery(&mut self) {
+        if self.stage == Stage::Importing {
+            self.error = Some("Audio import was interrupted. Import the original file again; no transcription was submitted.".into());
+        }
         self.stage = match self.stage {
+            Stage::Importing => Stage::Failed,
             Stage::Submitting => Stage::SubmissionUnknown,
             Stage::Preparing => Stage::Queued,
             // A brief POST may have reached the provider before the process died.
@@ -189,6 +194,7 @@ pub struct Meeting {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Summary {
+    pub call_at: String,
     pub id: String,
     pub title: String,
     pub added_at: String,
@@ -223,6 +229,7 @@ impl Summary {
             title: meeting.title.clone(),
             added_at: meeting.added_at.clone(),
             duration: meeting.duration,
+            call_at: meeting.call_at.clone(),
             status: meeting.attempt.stage.clone(),
             preview: meeting
                 .brief

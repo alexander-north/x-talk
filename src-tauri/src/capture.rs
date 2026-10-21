@@ -105,7 +105,7 @@ impl Capture {
                 .to_string();
             let name = device
                 .description()
-                .map(|d| d.name().to_owned())
+                .map(|d| device_label(&d))
                 .unwrap_or_else(|_| "Microphone".into());
             devices.push(Device { id, name });
         }
@@ -1021,6 +1021,24 @@ where
             None,
         )
         .map_err(|_| AppError::input("Could not open the audio output device."))
+}
+
+/// WASAPI exposes the full Windows FriendlyName in extended metadata.
+pub fn device_label(description: &cpal::DeviceDescription) -> String {
+    if let Some(full) = description
+        .extended()
+        .iter()
+        .find(|line| !line.trim().is_empty())
+    {
+        return full.clone();
+    }
+    match description
+        .driver()
+        .filter(|driver| *driver != description.name())
+    {
+        Some(driver) => format!("{} ({driver})", description.name()),
+        None => description.name().to_owned(),
+    }
 }
 
 #[cfg(test)]

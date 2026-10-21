@@ -1,8 +1,12 @@
 <script lang="ts">
- import {untrack,tick} from 'svelte';
+ import {onMount,untrack,tick} from 'svelte';
  import {api,message,elapsedTime} from '../ipc';
  import type {AppState,Transformation,Settings} from '../types';
  import {providerNames,settingsSections,textDirty,thinkingLabel,thinkingValue,type SettingsChange} from '../settings';
+ import {meetings} from '../meetings/ipc';
+ let meetingRetention=$state<number|null>(50);
+ onMount(()=>{void meetings.retention().then(value=>meetingRetention=value).catch(e=>error=message(e));});
+ async function retainMeetings(value:number|null){await task(async()=>{await meetings.setRetention(value);meetingRetention=value;},'Meeting audio retention saved');}
  import Icon from './Icon.svelte';
  import Updates from './Updates.svelte';
  import ShortcutEditor from './ShortcutEditor.svelte';
@@ -66,6 +70,11 @@
   <Updates {snapshot} {guard} change={change}/>
   <h2>Diagnostics</h2><p class="help">Version {snapshot.diagnostics.version} · Build {snapshot.diagnostics.build_id}</p><label class="check"><input id="diagnostic-logging" type="checkbox" checked={settings.diagnostic_logging} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,diagnostic_logging:value}));}}>Enable diagnostic logging</label><p class="help">Logs contain app activity and error codes, without API keys, audio, or text content. Nothing is uploaded. Changes apply immediately.</p><p class="help">Logs folder: <code>{snapshot.diagnostics.directory}</code></p><button onclick={()=>task(api.openLogs,'Logs folder opened')}>Open logs folder</button>{#if snapshot.diagnostics.error}<p class="error-text" role="alert">{snapshot.diagnostics.error}</p>{/if}{#if snapshot.diagnostics.dropped_events}<p class="help">{snapshot.diagnostics.dropped_events} diagnostic events could not be written.</p>{/if}
   <h2>Audio retention</h2><label class="check"><input type="checkbox" checked={settings.keep_audio===null} onchange={e=>{const value=e.currentTarget.checked?null:100;void change(s=>({...s,keep_audio:value}));}}>Keep all original audio</label>{#if settings.keep_audio!==null}<label>Keep audio for the latest N entries<input type="number" value={settings.keep_audio} min="1" max="100000" step="1" required onchange={e=>{const value=e.currentTarget.valueAsNumber;void change(s=>({...s,keep_audio:value}));}}></label>{/if}<p class="help">Older text remains in your library. Pending work keeps its audio until it completes or is discarded.</p>
+ {:else if section==='Meetings'}
+  <label>Transcription provider<select aria-label="Meeting transcription provider"><option value="assemblyai">AssemblyAI</option></select></label><p class="help">Speaker-labelled meeting transcripts use AssemblyAI. Meeting briefs use OpenAI Luna. Manage their keys in API Keys.</p>
+  <h2>Audio retention</h2><label class="check"><input type="checkbox" checked={meetingRetention===null} disabled={saving>0} onchange={e=>void retainMeetings(e.currentTarget.checked?null:50)}/>Keep all meeting audio</label>
+  {#if meetingRetention!==null}<label>Keep audio for the latest N meetings<input aria-label="Meeting audio retention" type="number" min="1" max="100000" step="1" value={meetingRetention} disabled={saving>0} onchange={e=>void retainMeetings(e.currentTarget.valueAsNumber)}/></label>{/if}
+  <p class="help">Transcripts, speaker edits and briefs stay indefinitely. Pending work keeps its audio until it completes. This setting is separate from dictation audio retention.</p>
  {:else if section==='Recording'}
   <label>Microphone<select value={settings.microphone??''} onchange={e=>{const value=e.currentTarget.value||null;void change(s=>({...s,microphone:value}));}}><option value="">System default at recording start</option>{#each snapshot.devices as device}<option value={device.id}>{device.name}</option>{/each}</select></label>
   <label class="check"><input type="checkbox" checked={settings.compression} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,compression:value}));}}>Compress upload audio</label><p class="help">Creates a smaller upload copy. The complete original is kept for playback and export.</p>

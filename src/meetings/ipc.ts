@@ -3,8 +3,8 @@ import {writable} from 'svelte/store';
 export interface CaptureStatus {id:string|null;active:boolean;finalizing:boolean;elapsed:number;microphone:boolean;system:boolean;microphone_muted:boolean;system_muted:boolean;microphone_level:number;system_level:number;error:string|null;warning:string|null}
 export const captureStatus=writable<CaptureStatus|null>(null);
 export interface CaptureOptions {microphone:boolean;system:boolean;microphone_device:string|null;output_device:string|null}
-export type Stage='queued'|'preparing'|'waiting_for_keys'|'submitting'|'polling'|'briefing'|'complete'|'failed'|'submission_unknown'|'recovered';
-export interface Summary {id:string;title:string;added_at:string;duration:number|null;status:Stage;preview:string|null;speakers:number;audio_available:boolean;revision:number}
+export type Stage='importing'|'queued'|'preparing'|'waiting_for_keys'|'submitting'|'polling'|'briefing'|'complete'|'failed'|'submission_unknown'|'recovered';
+export interface Summary {call_at:string;id:string;title:string;added_at:string;duration:number|null;status:Stage;preview:string|null;speakers:number;audio_available:boolean;revision:number}
 export interface Evidence {text:string;segment_ids:string[]}
 export interface BriefContent {title:string;summary:string;topics:Evidence[];decisions:Evidence[];actions:(Evidence&{owner:string|null;due:string|null})[];open_questions:Evidence[];suggested_follow_ups:string[]}
 export interface Speaker {id:string;name:string;turn_count:number;word_count:number;estimated_turn_coverage_seconds:number}
@@ -23,7 +23,8 @@ export const meetings={
  list:()=>invoke<Summary[]>('meetings_list'),
  get:(id:string)=>invoke<View>('meeting_get',{id}),
  pick:()=>invoke<ImportPreview|null>('meeting_pick'),
- import:(token:string)=>invoke<string>('meeting_import',{token}),
+ preview:(path:string)=>invoke<ImportPreview>('meeting_preview',{path}),
+ import:(token:string,title?:string,callAt?:string)=>invoke<string>('meeting_import',{token,title,callAt}),
  edit:(id:string,revision:number,edit:Edit)=>invoke<View>('meeting_edit',{id,revision,edit}),
  copy:(id:string)=>invoke<void>('meeting_copy',{id}),
  download:(id:string)=>invoke<void>('meeting_download',{id}),
@@ -31,4 +32,4 @@ export const meetings={
  retention:()=>invoke<number|null>('meeting_retention'),
  setRetention:(count:number|null)=>invoke<void>('meeting_set_retention',{count}),
 };
-export function stageLabel(stage:Stage){return ({queued:'Queued',preparing:'Preparing audio',waiting_for_keys:'Waiting for API keys',submitting:'Starting transcription',polling:'Transcribing',briefing:'Writing brief',complete:'Ready',failed:'Needs attention',submission_unknown:'Submission outcome unknown',recovered:'Recovered recording'})[stage];}
+export function stageLabel(stage:Stage){return ({importing:'Saving audio',queued:'Queued',preparing:'Preparing audio',waiting_for_keys:'Waiting for API keys',submitting:'Starting transcription',polling:'Transcribing',briefing:'Writing brief',complete:'Ready',failed:'Needs attention',submission_unknown:'Submission outcome unknown',recovered:'Recovered recording'})[stage];}

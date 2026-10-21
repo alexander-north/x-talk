@@ -90,6 +90,13 @@ pub async fn meeting_pick(app: tauri::AppHandle) -> Result<Option<ImportPreview>
     let Some(path) = path else {
         return Ok(None);
     };
+    Ok(Some(preview_path(app, path).await?))
+}
+#[tauri::command]
+pub async fn meeting_preview(app: tauri::AppHandle, path: String) -> Result<ImportPreview> {
+    preview_path(app, PathBuf::from(path)).await
+}
+async fn preview_path(app: tauri::AppHandle, path: PathBuf) -> Result<ImportPreview> {
     let s = app.state::<AppState>();
     let inspection = media::inspect(&s.media, &path).await?;
     let token = id();
@@ -105,20 +112,31 @@ pub async fn meeting_pick(app: tauri::AppHandle) -> Result<Option<ImportPreview>
         path,
         inspection: inspection.clone(),
     });
-    Ok(Some(ImportPreview {
+    Ok(ImportPreview {
         token,
         filename,
         inspection,
-    }))
+    })
 }
 #[tauri::command]
-pub async fn meeting_import(app: tauri::AppHandle, token: String) -> Result<String> {
+pub async fn meeting_import(
+    app: tauri::AppHandle,
+    token: String,
+    title: Option<String>,
+    call_at: Option<String>,
+) -> Result<String> {
+    if title.as_ref().is_some_and(|t| t.len() > 500)
+        || call_at
+            .as_ref()
+            .is_some_and(|d| chrono::DateTime::parse_from_rfc3339(d).is_err())
+    {
+        return Err(AppError::input("Enter a valid title and recording date."));
+    }
     let s = app.state::<AppState>();
     let _activity = s.worker_activity.read().await;
     if s.shutting_down.load(Ordering::Acquire) {
         return Err(AppError::input("Application is closing."));
     }
-    let _import = s.meeting_import_gate.lock().await;
     let pending = {
         let mut slot = s
             .meeting_import
@@ -149,17 +167,42 @@ pub async fn meeting_import(app: tauri::AppHandle, token: String) -> Result<Stri
         },
         Some(filename),
     );
+    if let Some(title) = title.filter(|t| !t.trim().is_empty()) {
+        m.title = title.trim().into();
+        m.manual_title = true;
+    }
+    if let Some(date) = call_at {
+        m.call_at = date;
+    }
+    m.duration = Some(pending.inspection.duration);
+    m.attempt.stage = Stage::Importing;
+    let store = s.meetings.clone();
+    let saved = m.clone();
+    blocking(move || store.insert(saved)).await?;
+    let id = m.id.clone();
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        prepare_import(handle, pending, m).await;
+    });
+    changed(&app);
+    Ok(id)
+}
+async fn prepare_import(app: tauri::AppHandle, pending: PendingImport, m: Meeting) {
+    let s = app.state::<AppState>();
+    let _activity = s.worker_activity.read().await;
+    let _gate = s.meeting_import_gate.lock().await;
     let directory = s.meetings.root.join("audio").join(&m.id);
-    tokio::fs::create_dir_all(&directory).await?;
-    let pending_path = directory.join("import.pending");
-    let pending_bytes = serde_json::to_vec(&m)?;
-    blocking(move || crate::storage::publish_journal(&pending_path, &pending_bytes)).await?;
-    let prepared = directory.join("prepared.m4a");
     let result: Result<()> = async {
+        if s.shutting_down.load(Ordering::Acquire) {
+            return Err(AppError::input(
+                "Import interrupted by application shutdown. Import the original file again.",
+            ));
+        }
+        tokio::fs::create_dir_all(&directory).await?;
+        let prepared = directory.join("prepared.m4a");
         let info = media::prepare(&s.media, &pending.path, &prepared).await?;
-        m.duration = Some(info.duration);
-        m.audio_hash = Some(media::content_hash(&prepared).await?);
-        let mut assets = vec!["prepared.m4a".to_string()];
+        let hash = media::content_hash(&prepared).await?;
+        let mut assets = vec!["prepared.m4a".to_owned()];
         let download = if pending.inspection.video {
             "prepared.m4a".into()
         } else {
@@ -171,27 +214,45 @@ pub async fn meeting_import(app: tauri::AppHandle, token: String) -> Result<Stri
                 .unwrap_or("audio");
             let name = format!("original.{ext}");
             tokio::fs::copy(&pending.path, directory.join(&name)).await?;
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(directory.join(&name))
+                .await?
+                .sync_all()
+                .await?;
             assets.push(name.clone());
             name
         };
-        m.audio = Some(Audio {
-            download,
-            prepared: Some("prepared.m4a".into()),
-            assets,
-        });
         let store = s.meetings.clone();
-        let saved = m.clone();
-        blocking(move || store.insert(saved)).await?;
+        let id = m.id.clone();
+        let attempt = m.attempt.id.clone();
+        blocking(move || {
+            store.complete_import(
+                &id,
+                &attempt,
+                Audio {
+                    download,
+                    prepared: Some("prepared.m4a".into()),
+                    assets,
+                },
+                hash,
+                info.duration,
+            )
+        })
+        .await?;
         Ok(())
     }
     .await;
-    if result.is_err() && s.meetings.get(&m.id).is_err() {
+    if let Err(error) = result {
         let _ = tokio::fs::remove_dir_all(&directory).await;
+        let _ = s.meetings.publish(&m.id, &m.attempt.id, move |record| {
+            record.attempt.stage = Stage::Failed;
+            record.attempt.error = Some(error.message);
+            Ok(())
+        });
     }
-    result?;
     s.meetings_wake.notify_one();
     changed(&app);
-    Ok(m.id)
 }
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -414,7 +475,7 @@ pub async fn meeting_devices() -> Result<Devices> {
             .filter_map(|d| {
                 Some(crate::capture::Device {
                     id: d.id().ok()?.to_string(),
-                    name: d.description().ok()?.name().to_string(),
+                    name: crate::capture::device_label(&d.description().ok()?),
                 })
             })
             .collect();

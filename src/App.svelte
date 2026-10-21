@@ -75,9 +75,9 @@
 <div class="app" role="region" aria-label="x-talk workspace" onpointermove={e=>{const r=e.currentTarget.getBoundingClientRect();e.currentTarget.style.setProperty('--light-x',`${e.clientX-r.left}px`);e.currentTarget.style.setProperty('--light-y',`${e.clientY-r.top}px`);}} data-theme={dark?'night':'day'} class:compact>
  <nav class="nav-rail" aria-label="Main navigation">
   <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36"></button>
+  <button class="rail-button" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><span style="display:flex;align-items:center"><img src={heart} alt="" width="23" height="23"/><img src={heart} alt="" width="23" height="23" style="margin-left:-12px;margin-top:10px"/></span></button>
   <div class="rail-divider"></div>
   <button class="rail-button" class:chosen={view==='recordings'} onclick={()=>go('recordings')} aria-label="Recordings" title="Recordings" aria-current={view==='recordings'?'page':undefined}><Icon name="list"/></button>
-  <button class="rail-button" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><span style="display:flex;align-items:center"><img src={heart} alt="" width="23" height="23"/><img src={heart} alt="" width="23" height="23" style="margin-left:-12px;margin-top:10px"/></span></button>
   <button class="rail-button" class:chosen={view==='settings'} onclick={()=>go('settings')} aria-label="Settings" title="Settings" aria-current={view==='settings'?'page':undefined}><Icon name="gear"/></button>
   <div class="rail-divider"></div>
   <button class="rail-button" disabled={!snapshot||busy} onclick={()=>mode(compact?'full':'compact')} aria-label={compact?'Expand workspace':'Compact view'} title={compact?'Expand workspace':'Compact view'}><Icon name="compact"/></button>

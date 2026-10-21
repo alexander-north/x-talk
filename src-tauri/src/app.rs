@@ -575,6 +575,7 @@ pub fn run() {
             crate::meetings::commands::meetings_list,
             crate::meetings::commands::meeting_get,
             crate::meetings::commands::meeting_pick,
+            crate::meetings::commands::meeting_preview,
             crate::meetings::commands::meeting_import,
             crate::meetings::commands::meeting_edit,
             crate::meetings::commands::meeting_copy,

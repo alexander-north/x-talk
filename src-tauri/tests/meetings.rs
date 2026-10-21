@@ -546,3 +546,98 @@ fn lightweight_library_metadata_tracks_edits_and_upgrades_older_documents() {
         edited.transcript.unwrap().turns.len()
     );
 }
+
+#[test]
+fn generated_citations_map_to_stable_ids_and_reject_invalid_references() {
+    use x_talk::meetings::providers::{brief_response_schema, parse_generated_brief};
+    let m = fixture();
+    let transcript = m.transcript.as_ref().unwrap();
+    let schema = brief_response_schema(transcript.turns.len());
+    assert_eq!(
+        schema["properties"]["topics"]["items"]["properties"]["segment_ids"]["items"]["maximum"],
+        4
+    );
+    let mut response = serde_json::json!({"title":"Review","summary":"A summary","topics":[{"text":"Discussed plan","segment_ids":[1,4]}],"decisions":[],"actions":[],"open_questions":[],"suggested_follow_ups":[]});
+    let brief = parse_generated_brief(&response.to_string(), transcript).unwrap();
+    assert_eq!(brief.topics[0].segment_ids, vec!["a", "d"]);
+    for refs in [
+        serde_json::json!([0]),
+        serde_json::json!([5]),
+        serde_json::json!(["a"]),
+        serde_json::json!([1.5]),
+        serde_json::json!([]),
+        serde_json::json!([1, 2, 3, 4]),
+    ] {
+        response["topics"][0]["segment_ids"] = refs;
+        assert!(parse_generated_brief(&response.to_string(), transcript).is_err());
+    }
+}
+
+#[test]
+fn imports_are_visible_before_audio_and_recover_without_provider_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MeetingStore::open(dir.path()).unwrap();
+    let mut m = Meeting::new("Chosen title".into(), SourceKind::Video, None);
+    m.attempt.stage = Stage::Importing;
+    m.manual_title = true;
+    m.call_at = "2026-10-01T12:00:00Z".into();
+    store.insert(m.clone()).unwrap();
+    assert_eq!(store.summaries().unwrap()[0].status, Stage::Importing);
+    assert!(store.pending().unwrap().is_empty());
+    assert!(store.update_busy().unwrap());
+    assert!(store.delete(&m.id, m.revision).is_err());
+    let path = dir.path().join("audio").join(&m.id);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("partial"), b"unfinished").unwrap();
+    drop(store);
+    let store = MeetingStore::open(dir.path()).unwrap();
+    let recovered = store.get(&m.id).unwrap();
+    assert_eq!(recovered.attempt.stage, Stage::Failed);
+    assert!(recovered.attempt.error.unwrap().contains("interrupted"));
+    assert!(!path.exists());
+    assert!(store.pending().unwrap().is_empty());
+    assert_eq!(
+        store.summaries().unwrap()[0].call_at,
+        "2026-10-01T12:00:00Z"
+    );
+}
+
+#[test]
+fn completed_import_preserves_metadata_and_checks_duplicate_before_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MeetingStore::open(dir.path()).unwrap();
+    let mut m = Meeting::new("Chosen title".into(), SourceKind::Video, None);
+    m.attempt.stage = Stage::Importing;
+    m.manual_title = true;
+    store.insert(m.clone()).unwrap();
+    let audio = Audio {
+        download: "prepared.m4a".into(),
+        prepared: Some("prepared.m4a".into()),
+        assets: vec!["prepared.m4a".into()],
+    };
+    let saved = store
+        .complete_import(
+            &m.id,
+            &m.attempt.id,
+            audio.clone(),
+            "same-audio".into(),
+            25.0,
+        )
+        .unwrap();
+    assert_eq!(saved.attempt.stage, Stage::Queued);
+    assert!(saved.manual_title);
+    assert_eq!(saved.title, "Chosen title");
+    let mut other = Meeting::new("Duplicate".into(), SourceKind::Video, None);
+    other.attempt.stage = Stage::Importing;
+    store.insert(other.clone()).unwrap();
+    assert!(store
+        .complete_import(
+            &other.id,
+            &other.attempt.id,
+            audio,
+            "same-audio".into(),
+            25.0
+        )
+        .is_err());
+    assert!(store.get(&other.id).unwrap().audio.is_none());
+}

@@ -1,4 +1,6 @@
-# Meetings, transcripts, and next steps
+# Meeting cards and smoother imports
+
+Meetings now sits directly below Recorder. Import through a file picker or drop zone, set a title and recording date, and see a processing card immediately. Background imports stay visible across navigation, including failures. Meeting audio retention lives in Settings → Meetings. Device selectors show fuller Windows names, recording controls collapse again, and brief citations are constrained to valid transcript evidence. Existing failed briefs can be regenerated without re-transcribing.
 
 Record a meeting using your microphone and system audio, or import an audio or video file. Video imports save only the extracted audio. AssemblyAI provides speaker-labelled transcripts and OpenAI Luna produces the meeting brief. Add both provider keys in Settings.
 
