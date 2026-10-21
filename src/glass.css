@@ -83,3 +83,6 @@
 
 @media(min-height:651px) and (max-height:730px){.app:not(.compact) .recording-home{padding-top:max(18px,calc(24dvh - var(--orb-size)/2))}}
 @media(max-height:430px){.app:not(.compact) .recording-home{--orb-size:80px}.app:not(.compact) .recording-home .recording-focus{padding-bottom:25px}.app:not(.compact) .glass-orb .orb-symbol svg{width:56px;height:56px}}
+
+/* Leave room for the mode switch and source controls in the small window. */
+.app.compact .recording-home{--orb-size:108px;padding-top:34px;gap:10px}.app.compact .recording-focus{padding-bottom:40px}

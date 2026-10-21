@@ -88,7 +88,7 @@ describe('Meetings native acceptance',()=>{
   await $('button[aria-label="Settings"]').click();
   await $('button[aria-label="Meetings"]').click();
   await expect($('.meeting-library')).toBeDisplayed();
-  await expect($('button=Record a meeting')).toBeDisplayed();
+  await expect($('button=Record a meeting')).not.toExist();
   await expect($('.meeting-capture')).not.toExist();
   await $('button=Open recording ↗').click();
   await expect($('button=Record a meeting')).not.toExist();
@@ -121,30 +121,35 @@ describe('Meetings native acceptance',()=>{
   await expect($('input[type="checkbox"]')).not.toExist();
   const aligned=await browser.execute(()=>{const field=document.querySelector('input[aria-label="Search transcript"]'),icon=field.parentElement.querySelector('svg');const a=field.getBoundingClientRect(),b=icon.getBoundingClientRect();return a.left>b.left&&Math.abs((a.top+a.bottom-b.top-b.bottom)/2)<5;});
   if(!aligned)throw Error('Transcript search is not aligned with its icon');
-  await $('#turn-seg_1').$('button=Edit turn').click();
+  await $('#turn-seg_1').$('button[aria-label="Edit turn"]').click();
   await $('select[aria-label="Turn speaker"]').selectByAttribute('value','B');
   await expect($('input[aria-label="Turn speaker name"]')).toHaveValue('Speaker B');
   await $('input[aria-label="Turn speaker name"]').setValue('Morgan');
-  await $('button=Save turn').click();
+  await $('button=Save').click();
   view=await command('meeting_get',{id});
   if(view.meeting.transcript.turns[0].speaker_id!=='B'||view.meeting.transcript.speakers.find(s=>s.id==='B')?.name!=='Morgan')throw Error('Turn reassignment and speaker rename were not saved together');
   const revision=view.meeting.revision;
   const rejected=await browser.execute(async(id,revision)=>{try{await window.__TAURI_INTERNALS__.invoke('meeting_edit',{id,revision,edit:{kind:'correct',turn:'seg_1',correction:{text:'Must not be saved',speaker:'A'},speaker_name:''}});return false;}catch{return true;}},id,revision);
   if(!rejected||(await command('meeting_get',{id})).meeting.revision!==revision)throw Error('Invalid rename partially saved the correction');
   await $('#turn-seg_1').$('button=Restore original turn').click();
-  await $('#turn-seg_1 .meeting-card-heading button').waitForEnabled();
-  await $('#turn-seg_1 .meeting-card-heading button').click();
+  await $('#turn-seg_1 .meeting-card-heading > button').waitForEnabled();
+  await $('#turn-seg_1 .meeting-card-heading > button').click();
   await expect($('.meeting-audio button[aria-label="Pause audio"]')).toBeDisplayed();
   await $('.meeting-audio button[aria-label="Pause audio"]').click();
   if(!(await command('playback_state'))?.paused)throw Error('Timestamp playback could not be paused from the shared toolbar');
   await command('stop_playback');
-  await browser.execute(()=>{document.querySelector('.meeting-panel').style.minHeight='2400px';document.querySelector('.meetings-page').scrollTop=700;});
-  const first=await browser.execute(()=>{const bar=document.querySelector('.meeting-review-toolbar').getBoundingClientRect(),page=document.querySelector('.meetings-page');return {top:bar.top,bottom:bar.bottom,pageTop:page.getBoundingClientRect().top,scroll:page.scrollTop};});
-  await browser.execute(()=>{document.querySelector('.meetings-page').scrollTop=900;});
-  const second=await browser.execute(()=>{const bar=document.querySelector('.meeting-review-toolbar').getBoundingClientRect(),page=document.querySelector('.meetings-page');return {top:bar.top,bottom:bar.bottom,pageTop:page.getBoundingClientRect().top,scroll:page.scrollTop};});
-  if(first.scroll<650||second.scroll<850||Math.abs(first.top-second.top)>2||second.top<second.pageTop-2||second.bottom>await browser.execute(()=>innerHeight))throw Error(`Review toolbar did not remain visible: ${JSON.stringify({first,second})}`);
-  await browser.saveScreenshot('.tmp/meetings-sticky-toolbar.png');
-  await browser.execute(()=>{document.querySelector('.meeting-panel').style.minHeight='';});
+  for(const tab of ['Transcript','Meeting brief']){
+   await $(`button[role="tab"]=${tab}`).click();
+   const result=await browser.execute(()=>{
+    const region=document.querySelector('.panel-scroll'),bar=document.querySelector('.meeting-review-toolbar'),panel=document.querySelector('.meeting-panel');
+    const top=bar.getBoundingClientRect().top;
+    const filler=document.createElement('div');filler.style.height='2400px';region.append(filler);region.scrollTop=700;
+    const result={scroll:region.scrollTop,stable:Math.abs(top-bar.getBoundingClientRect().top)<2,bottom:panel.getBoundingClientRect().bottom,height:innerHeight,player:document.querySelector('.meeting-audio').clientWidth,toolbar:bar.clientWidth};
+    filler.remove();return result;
+   });
+   if(result.scroll<650||!result.stable||result.bottom>result.height||Math.abs(result.player-result.toolbar)>2)throw Error(`Contained review layout failed: ${JSON.stringify(result)}`);
+  }
+  await browser.saveScreenshot('.tmp/meetings-contained-scroll.png');
   await $('button[role="tab"]=Details').click();
   await expect($('button=Save details')).toBeDisplayed();
   await $('button[aria-label="Settings"]').click();
@@ -153,9 +158,9 @@ describe('Meetings native acceptance',()=>{
   if(!/^[0-9a-f]{8}(-dirty)?$/.test(state.diagnostics.commit))throw Error('Missing source commit identity');
   await $('button[aria-label="Meetings"]').click();
  });
- it('moves Meetings above the divider and keeps its settings independent',async()=>{
+ it('moves both libraries below the divider and keeps its settings independent',async()=>{
   const nav=await browser.execute(()=>Array.from(document.querySelector('.nav-rail').children).slice(0,5).map(el=>el.getAttribute('aria-label')||el.className));
-  if(nav.join('|')!=='Recorder|Meetings|rail-divider|Recordings|Settings')throw Error('Navigation order is incorrect');
+  if(nav.join('|')!=='Recorder|rail-divider|Transcripts|Meetings|Settings')throw Error('Navigation order is incorrect');
   await $('button[aria-label="Settings"]').click();
   await $('nav[aria-label="Settings sections"]').$('button=Meetings').click();
   await expect($('select[aria-label="Meeting transcription provider"]')).toHaveValue('assemblyai');
@@ -165,10 +170,17 @@ describe('Meetings native acceptance',()=>{
   await browser.waitUntil(async()=>await command('meeting_retention')===7,{timeout:5000});
   if((await command('state')).settings.keep_audio!==old)throw Error('Meeting retention changed dictation');
   await $('button[aria-label="Meetings"]').click();
-  await $('button=Record a meeting').click();
-  await expect($('.setup-grid')).toBeDisplayed();
-  await $('button[aria-label="Close recording setup"]').click();
-  await expect($('.setup-grid')).not.toExist();
+  await $('button[aria-label="Recorder"]').click();
+  await $('.recorder-modes').$('button=Meeting').click();
+  await expect($('select[aria-label="Meeting microphone"]')).toBeDisplayed();
+  await expect($('select[aria-label="Meeting system output"]')).toBeDisplayed();
+  await expect($('button[aria-label="Start meeting recording"]')).toBeEnabled();
+  const bottom=await browser.execute(()=>{const toggle=document.querySelector('.recorder-modes').getBoundingClientRect(),main=document.querySelector('.meeting-recorder').getBoundingClientRect();return toggle.top>=main.bottom-1&&toggle.bottom<=innerHeight;});
+  if(!bottom)throw Error('Recording mode toggle is not anchored below the recorder');
+  await browser.saveScreenshot('.tmp/meeting-recorder.png');
+  await $('.recorder-modes').$('button=Dictation').click();
+  await expect($('button[aria-label="Start recording"]')).toBeDisplayed();
+  await $('button[aria-label="Meetings"]').click();
  });
  it('admits a background import immediately and preserves it across navigation',async()=>{
   const back=$('button=All meetings');if(await back.isExisting())await back.click();

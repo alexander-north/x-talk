@@ -38,7 +38,7 @@ describe('Recording workspace',()=>{
   await $('button[aria-label="Cancel recording"]').click();await expect($('button[aria-label="Start recording"]')).toBeDisplayed();await expect($('button[aria-label="Cancel recording"]')).not.toExist();if((await command('history',{offset:0})).length!==before.length)throw new Error('Cancel admitted a history entry');
  });
  it('provides search, sorting, column controls, full-text viewing, and revision-safe transcript editing',async()=>{
-  await $('button[aria-label="Recordings"]').click();await expect($('.recordings-table')).toBeDisplayed();const stickyActions=await browser.execute(()=>{const s=getComputedStyle(document.querySelector('th.actions-column'));return s.position==='sticky'&&s.top==='0px'&&s.backgroundColor!=='rgba(0, 0, 0, 0)';});if(!stickyActions)throw Error('Actions header is not sticky and opaque');
+  await $('button[aria-label="Transcripts"]').click();await expect($('.recordings-table')).toBeDisplayed();const stickyActions=await browser.execute(()=>{const s=getComputedStyle(document.querySelector('th.actions-column'));return s.position==='sticky'&&s.top==='0px'&&s.backgroundColor!=='rgba(0, 0, 0, 0)';});if(!stickyActions)throw Error('Actions header is not sticky and opaque');
   await (await $$('.text-preview'))[0].click();await expect($('dialog')).toBeDisplayed();await expect($('[aria-label="Full saved text"]')).toHaveText('Acceptance raw transcript.');await $('button[aria-label="Close dialog"]').click();
   await $('button[title="Edit recording"]').click();await expect($('dialog')).toBeDisplayed();
   const inputs=await $$('dialog input');await inputs[0].setValue('Desert thoughts');
@@ -50,7 +50,7 @@ describe('Recording workspace',()=>{
   await $('summary').click();const source=await $('label=Source');await source.click();
   await expect($('button=Source')).toExist();await $('button[aria-label="Move Source column left"]').click();await $('summary').click();
   const resizer=$('button[aria-label="Resize Transcript column"]');await resizer.click();await browser.keys('ArrowRight');
-  await $('button[aria-label="Recorder"]').click();await $('button[aria-label="Recordings"]').click();await expect($('button=Source')).toExist();
+  await $('button[aria-label="Recorder"]').click();await $('button[aria-label="Transcripts"]').click();await expect($('button=Source')).toExist();
   await browser.saveScreenshot('.tmp/recordings-sand.png');
  });
  it('plays, pauses, seeks, and stops original audio without provider requests',async()=>{
@@ -115,13 +115,13 @@ describe('Settings workflow and responsive library',()=>{
   if((await command('recordings',{query:{search:'',sort:'created',descending:true,offset:0}})).total!==before.total||(await command('state')).jobs.length!==jobs)throw Error('Preset test created recording work');
  });
  it('fits all available columns without horizontal scrolling and searches saved text',async()=>{
-  await $('button[aria-label="Recordings"]').click();await $('summary').click();
+  await $('button[aria-label="Transcripts"]').click();await $('summary').click();
   const checkboxes=await $$('.column-menu input[type=checkbox]');for(const box of checkboxes)if(!await box.isSelected())await box.click();await $('summary').click();
   await expect($('input[aria-label="Search recordings"]')).toExist();await expect($('button=Import audio')).not.toExist();await expect($('select[aria-label="Recordings per page"]')).toHaveValue('50');await $('select[aria-label="Recordings per page"]').selectByAttribute('value','25');await expect($('select[aria-label="Recordings per page"]')).toHaveValue('25');
   for(const width of [1200,800,460]){await browser.setWindowSize(width,800);await browser.pause(150);const overflow=await browser.execute(()=>[document.documentElement,document.querySelector('.main-shell'),document.querySelector('.table-scroll')].some(e=>e.scrollWidth>e.clientWidth+1));if(overflow)throw Error(`Horizontal overflow at ${width}px`);}
   await browser.setWindowSize(1100,800);await $('input[aria-label="Search recordings"]').click();const focus=await browser.execute(()=>getComputedStyle(document.querySelector('.search-field')).outlineStyle);if(focus==='none')throw Error('Search container is missing focus outline');
   await $('button[aria-label="Recorder"]').click();await expect($('.record-instruction')).not.toExist();await expect($('.focus-caption')).not.toExist();
-  const footer=await browser.execute(()=>{const b=document.querySelector('.import-footer').getBoundingClientRect();return {bottom:innerHeight-b.bottom,left:b.left};});if(footer.bottom>25||footer.left>130)throw Error('Import is not in the recorder bottom-left');await $('button[aria-label="Recordings"]').click();await $('input[aria-label="Search recordings"]').setValue('no matching recording');await expect($('.table-empty h2')).toHaveText('No recordings found');
+  const footer=await browser.execute(()=>{const b=document.querySelector('.import-footer').getBoundingClientRect();return {bottom:innerHeight-b.bottom,left:b.left};});if(footer.bottom>25||footer.left>130)throw Error('Import is not in the recorder bottom-left');await $('button[aria-label="Transcripts"]').click();await $('input[aria-label="Search recordings"]').setValue('no matching recording');await expect($('.table-empty h2')).toHaveText('No recordings found');
   await $('button=Clear All').click();await expect($('dialog')).toBeDisplayed();await $('button=Cancel').click();if((await command('recordings',{query:{search:'',sort:'created',descending:true,offset:0}})).total!==1)throw Error('Cancel cleared the library');
   await $('button=Clear All').click();await $('button=Clear all recordings').click();await expect($('dialog')).not.toExist();if((await command('recordings',{query:{search:'',sort:'created',descending:true,offset:0}})).total!==0)throw Error('Clear All was limited to the current search');
  });

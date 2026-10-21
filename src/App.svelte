@@ -18,7 +18,9 @@
  import ToastHost from './components/ToastHost.svelte';
  import RecordingOutline from './components/RecordingOutline.svelte';
  import {notify} from './notifications';
- let meetingSetup=$state(false);
+ let recorderMode=$state<'dictation'|'meeting'>('dictation');
+ let meetingBusy=$state(false);
+ $effect(()=>{if($captureStatus?.id)recorderMode='meeting';else if(snapshot?.capture.active)recorderMode='dictation';});
  import heart from './assets/heart.png';
  let snapshot=$state<AppState|null>(null);
  let latest=$state<Entry|null>(null);
@@ -78,10 +80,10 @@
 <svelte:window onkeydown={e=>{if(e.key==='Escape'&&fullscreen&&!confirm)void mode('fullscreen');}}/>
 <div class="app" role="region" aria-label="x-talk workspace" onpointermove={e=>{const r=e.currentTarget.getBoundingClientRect();e.currentTarget.style.setProperty('--light-x',`${e.clientX-r.left}px`);e.currentTarget.style.setProperty('--light-y',`${e.clientY-r.top}px`);}} data-theme={dark?'night':'day'} class:compact>
  <nav class="nav-rail" aria-label="Main navigation">
-  <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36">{#if snapshot?.capture.active}<RecordingOutline/>{/if}</button>
-  <button class="rail-home" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><img src={heart} alt="" width="36" height="36"/>{#if $captureStatus?.active}<RecordingOutline/>{/if}</button>
+  <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active||$captureStatus?.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36">{#if snapshot?.capture.active||$captureStatus?.active}<RecordingOutline/>{/if}</button>
   <div class="rail-divider"></div>
-  <button class="rail-button" class:chosen={view==='recordings'} onclick={()=>go('recordings')} aria-label="Recordings" title="Recordings" aria-current={view==='recordings'?'page':undefined}><Icon name="list"/></button>
+  <button class="rail-button" class:chosen={view==='recordings'} onclick={()=>go('recordings')} aria-label="Transcripts" title="Transcripts" aria-current={view==='recordings'?'page':undefined}><Icon name="list"/></button>
+  <button class="rail-button" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><Icon name="grid"/></button>
   <button class="rail-button" class:chosen={view==='settings'} onclick={()=>go('settings')} aria-label="Settings" title="Settings" aria-current={view==='settings'?'page':undefined}><Icon name="gear"/></button>
   <div class="rail-divider"></div>
   <button class="rail-button" disabled={!snapshot||busy} onclick={()=>mode(compact?'full':'compact')} aria-label={compact?'Expand workspace':'Compact view'} title={compact?'Expand workspace':'Compact view'}><Icon name="compact"/></button>
@@ -95,17 +97,17 @@
   {#if snapshot?.shortcut_error}<div class="banner error">{snapshot.shortcut_error.message} Use the Recorder to record.</div>{/if}
   {#each snapshot?.recovery_warnings??[] as warning}<div class="banner recovery-warning" role="alert">{warning.message}</div>{/each}
   {#if paused.length}<section class="recovery"><div><strong>{paused.length} interrupted job{paused.length===1?'':'s'}</strong><small>Paused until you resume. Fresh recordings can continue.</small></div><button disabled={busy||snapshot?.operation_busy||paused.every(j=>j.status==='unknown')} onclick={()=>run(()=>api.recover(paused.filter(j=>j.status==='paused').map(j=>j.id),false))}>Resume available</button><button class="subtle-button" disabled={busy} onclick={()=>confirm='discard'}>Discard pending</button></section>{/if}
-  <MeetingCapture bind:setup={meetingSetup} {compact} dictating={snapshot?.capture.active??false}/>
-  {#if compact&&$captureStatus?.id}<span class="muted" style="text-align:center">Meeting controls</span>
-  {:else if loading}<main class="empty">Opening your workspace…</main>
+  <MeetingCapture visible={view==='record'&&recorderMode==='meeting'&&!!snapshot} bind:busy={meetingBusy} {compact} dictating={!!snapshot?.capture.active||!!snapshot?.operation_busy}/>
+  {#if loading}<main class="empty">Opening your workspace…</main>
   {:else if !snapshot}<main class="empty"><h1>Could not connect to x-talk</h1><p>{error||'Open this interface through the desktop application.'}</p><button onclick={refresh}>Retry connection</button></main>
   {:else if view==='record'}
-   <Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')} importAudio={()=>run(api.import)}/>
+   {#if recorderMode==='dictation'}<Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')} importAudio={()=>run(api.import)}/>{/if}
    {#if latestJob&&['failed','unknown','paused'].includes(latestJob.status)}<div class="home-job-error stage-error" role="alert"><strong>{jobLabel(latestJob)}</strong>{#if latestJob.error}<p>{latestJob.error.message}</p>{/if}<button class="subtle-button" onclick={()=>go('recordings')}>View recording</button></div>{/if}
   {:else if view==='recordings'}<RecordingsTable {snapshot} {refreshKey} {busy} {run} {edit} {remove} clearAll={()=>{error='';confirm='clear';}} {inspect} {playback}/>
-  {:else if view==='meetings'}<Meetings {playback} refreshPlayback={refreshProgress} record={()=>meetingSetup=true} recording={!!snapshot?.capture.active||!!$captureStatus?.id}/>
+  {:else if view==='meetings'}<Meetings {playback} refreshPlayback={refreshProgress} recording={!!snapshot?.capture.active||!!$captureStatus?.id}/>
   {:else}<SettingsView bind:this={settingsView} {snapshot} {write} {refresh} {guard}/>
   {/if}
+  {#if view==='record'&&snapshot}<div class="recorder-modes" role="group" aria-label="Recording mode">{#each ['dictation','meeting'] as mode}<button class:selected={recorderMode===mode} aria-pressed={recorderMode===mode} disabled={!!snapshot.capture.active||!!snapshot.capture.finalizing||snapshot.operation_busy||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode=mode as 'dictation'|'meeting'}>{mode==='dictation'?'Dictation':'Meeting'}</button>{/each}</div>{/if}
  </div>
  <ToastHost/>
  {#if confirm}<dialog bind:this={dialog} class="modal" class:wide={confirm==='edit'||confirm==='text'} aria-labelledby="dialog-title" oncancel={()=>confirm=null} onclose={()=>confirm=null}>

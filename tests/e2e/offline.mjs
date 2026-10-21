@@ -36,7 +36,7 @@ describe('Offline native acceptance',()=>{
   mkdirSync('.tmp',{recursive:true});await browser.saveScreenshot('.tmp/offline-recorder.png');
  });
  it('searches both saved outputs, preserves stale transformations after editing, and confirms Clear All',async()=>{
-  await $('button[aria-label="Recordings"]').click();
+  await $('button[aria-label="Transcripts"]').click();
   for(const search of ['raw transcript','transformed output']){
    const page=await command('recordings',{query:{search,sort:'created',descending:true,offset:0}});
    if(page.total!==1)throw Error('Search failed for '+search);

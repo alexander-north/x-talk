@@ -8,7 +8,7 @@
  import Activity from '../Activity.svelte';
  import AudioPlayer from '../AudioPlayer.svelte';
  import type {Playback} from '../../types';
- let {record,playback,refreshPlayback,recording=false}:{record:()=>void;playback:Playback|null;refreshPlayback:()=>Promise<void>;recording?:boolean}=$props();
+ let {playback,refreshPlayback,recording=false}:{playback:Playback|null;refreshPlayback:()=>Promise<void>;recording?:boolean}=$props();
  const processing=(stage:string)=>['importing','extracting','converting','queued','preparing','submitting','polling','briefing'].includes(stage);
  let importing=$state(false);
  import Icon from '../Icon.svelte';
@@ -51,10 +51,10 @@
   return()=>{clearInterval(timer);readVersion++;void subscription.then(f=>f());};
  });
 </script>
-<main class="meetings-page">
+<main class="meetings-page" class:detail-view={!!current}>
  {#if !current}
   <div class="page-heading"><div><p class="eyebrow">ROOM FOR EVERY VOICE</p><h1>Meetings <span class="count">{rows.length}</span></h1><p class="muted">The conversation, the people, and what comes next.</p></div>
-   <div class="actions"><button disabled={busy||recording} onclick={record}><Icon name="mic" size={17}/>Record a meeting</button><button class="primary" disabled={busy} onclick={()=>importing=true}><Icon name="upload" size={17}/>Import recording</button></div>
+   <div class="actions"><button class="primary" disabled={busy} onclick={()=>importing=true}><Icon name="upload" size={17}/>Import recording</button></div>
   </div>
   <div class="table-toolbar"><label class="search-field"><Icon name="search" size={17}/><input aria-label="Search meetings" placeholder="Search titles and briefs…" bind:value={search}/></label></div>
   <div class="meeting-library">
@@ -80,26 +80,31 @@
    {#each [['brief','Meeting brief'],['transcript','Transcript'],['speakers','Manage speakers'],['details','Details']] as [key,label]}<button role="tab" aria-selected={tab===key} class:chosen={tab===key} onclick={()=>tab=key}>{label}</button>{/each}
   </div>
   </div>
-  <section class="meeting-panel">
+  <section class="meeting-panel" class:contained={tab==='brief'||tab==='transcript'}>
   {#if tab==='brief'}
    <div class="meeting-card-heading"><h2>Meeting brief</h2><button class="subtle-button" disabled={busy||!transcript||!canRetry} onclick={()=>edit({kind:'retry',transcription:false})}>{#if processing(current.transcription_status)}<Activity/>{:else}<Icon name="spark" size={16}/>{/if}Regenerate brief</button></div>
    {#if current.brief.stale}<p class="banner">This brief predates transcript or speaker changes. Regenerate it to reflect your edits.</p>{/if}
    {#if brief}<p class="meeting-summary">{brief.summary}</p>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus and scroll this region.) -->
+   <div class="panel-scroll" role="region" aria-label="Brief content" tabindex="0">
     {#each ([['Topics',brief.topics],['Decisions',brief.decisions],['Open questions',brief.open_questions]] as [string,Evidence[]][]) as section}
      <h3>{section[0]}</h3>
      {#each section[1] as item}<div class="brief-item"><p>{item.text}</p><div class="evidence-links">{#each item.segment_ids as id}<button class="subtle-button" onclick={()=>supporting(id)}>{duration(transcript?.turns.find(t=>t.id===id)?.start??0)}</button>{/each}</div></div>{:else}<p class="muted">None recorded.</p>{/each}
     {/each}
     <h3>Action items</h3>{#each brief.actions as action}<div class="brief-item"><p>{action.text}</p><small>{action.owner??'No owner stated'} · {action.due??'No due date stated'}</small><div class="evidence-links">{#each action.segment_ids as id}<button class="subtle-button" onclick={()=>supporting(id)}>{duration(transcript?.turns.find(t=>t.id===id)?.start??0)}</button>{/each}</div></div>{:else}<p class="muted">No explicit commitments recorded.</p>{/each}
     <h3>Suggested follow-up questions</h3>{#each brief.suggested_follow_ups as question}<p>{question}</p>{:else}<p class="muted">None suggested.</p>{/each}
-   {:else}<div class="empty">{#if processing(current.transcription_status)}<Activity size={30}/>{:else}<Icon name="spark" size={30}/>{/if}<h2>{current.brief.status==='failed'?'Brief needs attention':'Your brief is on its way'}</h2><p>{current.brief.error??'The transcript is saved independently. You can review and copy it as soon as it is ready.'}</p></div>{/if}
+   </div>{:else}<div class="empty">{#if processing(current.transcription_status)}<Activity size={30}/>{:else}<Icon name="spark" size={30}/>{/if}<h2>{current.brief.status==='failed'?'Brief needs attention':'Your brief is on its way'}</h2><p>{current.brief.error??'The transcript is saved independently. You can review and copy it as soon as it is ready.'}</p></div>{/if}
   {:else if tab==='transcript'}
    <div class="table-toolbar"><label class="search-field"><Icon name="search" size={16}/><input bind:value={filter} placeholder="Find in transcript…" aria-label="Search transcript"/></label><select bind:value={speakerFilter} aria-label="Filter speaker"><option value="">All speakers</option>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></div>
    <p class="help">Copy meeting JSON always includes the complete corrected transcript, original evidence, and brief, regardless of these filters.</p>
+   <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus and scroll this region.) -->
+   <div class="panel-scroll" role="region" aria-label="Transcript turns" tabindex="0">
    {#each turns as turn (turn.id)}<article class="meeting-turn" id={`turn-${turn.id}`} style:border-left={`3px solid ${speakerColor(turn.speaker_id)}`}>
-    <div class="meeting-card-heading"><strong>{name(turn.speaker_id)}</strong><button class="subtle-button" disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.play(current!.id,turn.start))}>{duration(turn.start)}–{duration(turn.end)} · Play</button></div>
-    {#if editTurn===turn.id}<div class="turn-speaker-fields"><label>Speaker<select aria-label="Turn speaker" bind:value={editSpeaker} onchange={e=>{editSpeaker=e.currentTarget.value;editName=name(editSpeaker);}}>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></label><label>Speaker name<input aria-label="Turn speaker name" bind:value={editName} maxlength="200" required/></label></div><p class="help rename-help">Renaming updates this speaker throughout the meeting.</p><label>Turn text<textarea rows="4" bind:value={editText}></textarea></label><div class="actions"><button onclick={()=>editTurn=''}>Cancel</button><button disabled={busy||editingBlocked} onclick={async()=>{if(await edit({kind:'correct',turn:turn.id,correction:{text:editText,speaker:editSpeaker},speaker_name:editName!==name(editSpeaker)?editName:undefined}))editTurn='';}}>Save turn</button></div>
-    {:else}<p class="turn-text">{turn.text}</p><div class="actions"><button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>{editTurn=turn.id;editText=turn.text;editSpeaker=turn.speaker_id;editName=name(turn.speaker_id);}}>Edit turn</button>{#if turn.correction.text!==null||turn.correction.speaker!==null}<button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>edit({kind:'correct',turn:turn.id,correction:null})}>Restore original turn</button>{/if}</div>{/if}
+    <div class="meeting-card-heading"><span class="turn-name"><strong>{name(turn.speaker_id)}</strong><button class="icon-button" aria-label="Edit turn" disabled={busy||editingBlocked} onclick={()=>{editTurn=turn.id;editText=turn.text;editSpeaker=turn.speaker_id;editName=name(turn.speaker_id);}}><Icon name="edit" size={15}/></button></span><button class="subtle-button" disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.play(current!.id,turn.start))}>{duration(turn.start)}–{duration(turn.end)} · Play</button></div>
+    {#if editTurn===turn.id}<div class="turn-speaker-fields"><label>Speaker<select aria-label="Turn speaker" bind:value={editSpeaker} onchange={e=>{editSpeaker=e.currentTarget.value;editName=name(editSpeaker);}}>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></label><label>Speaker name<input aria-label="Turn speaker name" bind:value={editName} maxlength="200" required/></label></div><p class="help rename-help">Renaming updates this speaker throughout the meeting.</p><label>Turn text<textarea rows="4" bind:value={editText}></textarea></label><div class="actions"><button onclick={()=>editTurn=''}>Cancel</button><button disabled={busy||editingBlocked} onclick={async()=>{if(await edit({kind:'correct',turn:turn.id,correction:{text:editText,speaker:editSpeaker},speaker_name:editName!==name(editSpeaker)?editName:undefined}))editTurn='';}}>Save</button></div>
+    {:else}<p class="turn-text">{turn.text}</p><div class="actions">{#if turn.correction.text!==null||turn.correction.speaker!==null}<button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>edit({kind:'correct',turn:turn.id,correction:null})}>Restore original turn</button>{/if}</div>{/if}
    </article>{:else}<p class="empty">{transcript?'No turns match these filters.':'The transcript will appear here after processing.'}</p>{/each}
+   </div>
   {:else if tab==='speakers'}
    <h2>The people in this conversation</h2><p class="help speaker-intro">Estimated time measures diarized turn coverage, including pauses. Speakers may overlap.</p>
    {#each transcript?.speakers??[] as speaker}<form class="speaker-row" onsubmit={e=>{e.preventDefault();const data=new FormData(e.currentTarget);void edit({kind:'name',speaker:speaker.id,name:String(data.get('name'))});}}><div class="speaker-name"><label>Speaker name<input name="name" value={speaker.name} maxlength="200" required/></label><button disabled={busy||editingBlocked}>Save name</button></div><small>{speaker.turn_count} turns · {speaker.word_count} words · {duration(speaker.estimated_turn_coverage_seconds)}</small></form>{/each}
@@ -123,11 +128,12 @@
  .meeting-card{min-width:0;display:flex;flex-direction:column;min-height:300px}.meeting-card h2{margin:20px 0 8px}.meeting-preview{flex:1;margin:8px 0 20px}.card-bottom{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--line);padding-top:16px;font-size:12px;color:var(--muted)}.meeting-preview .text-preview{flex:1;line-height:1.65}
  .meeting-tabs{display:flex;gap:8px;margin:20px 0;flex-wrap:wrap}.meeting-tabs button{border-radius:20px}.meeting-tabs .chosen{background:var(--accent-soft);font-weight:600}
  .meeting-summary{font-size:17px;line-height:1.8}.brief-item{padding:8px 0 12px;border-bottom:1px solid var(--line)}.brief-item p{margin:8px 0}
- .evidence-links{display:flex;gap:8px}.meeting-turn{scroll-margin-top:180px;padding:22px 16px;border-bottom:1px solid var(--line)}
+ .evidence-links{display:flex;gap:8px}.meeting-turn{scroll-margin-top:12px;padding:22px 16px;border-bottom:1px solid var(--line)}
  .turn-text{white-space:pre-wrap;line-height:1.7}.meeting-panel h3{margin-top:28px}
- .speaker-intro{margin:12px 0 24px;line-height:1.8}.speaker-row{padding:16px 0 22px;border-bottom:1px solid var(--line)}.speaker-name{display:flex;align-items:end;gap:12px;margin-bottom:14px}.speaker-name label{width:220px;max-width:65%;margin:0!important}.speaker-row small{display:block;font-size:12px}.back-to-meetings{margin-bottom:28px}.meeting-status{display:inline-flex;margin-bottom:12px}.meeting-audio{max-width:480px;margin:24px 0}
- .meeting-panel .search-field{display:flex;flex-direction:row;align-items:center;margin:0;gap:9px}.meeting-panel .search-field input{flex:1;min-width:0}.meeting-panel .table-toolbar>select{width:auto;min-width:150px}.turn-speaker-fields{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.turn-speaker-fields label{width:220px;max-width:100%}.rename-help{margin:4px 0 18px}.meeting-review-toolbar{position:sticky;top:-1px;z-index:5;background:var(--bg);padding:12px 0 1px;border-bottom:1px solid var(--line);margin-bottom:20px}.meeting-review-toolbar .meeting-audio{margin:0 0 12px;max-width:480px}.meeting-review-toolbar .meeting-tabs{margin:0 0 12px}
+ .speaker-intro{margin:12px 0 24px;line-height:1.8}.speaker-row{padding:16px 0 22px;border-bottom:1px solid var(--line)}.speaker-name{display:flex;align-items:end;gap:12px;margin-bottom:14px}.speaker-name label{width:220px;max-width:65%;margin:0!important}.speaker-row small{display:block;font-size:12px}.back-to-meetings{margin-bottom:28px}.meeting-status{display:inline-flex;margin-bottom:12px}.meeting-audio{width:100%;margin:24px 0}
+ .meeting-panel .search-field{display:flex;flex-direction:row;align-items:center;margin:0;gap:9px}.meeting-panel .search-field input{flex:1;min-width:0}.meeting-panel .table-toolbar>select{width:auto;min-width:150px}.turn-speaker-fields{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.turn-speaker-fields label{width:220px;max-width:100%}.rename-help{margin:4px 0 18px}.meeting-review-toolbar{background:var(--bg);padding:12px 0 1px;border-bottom:1px solid var(--line);margin-bottom:20px}.meeting-review-toolbar .meeting-audio{margin:0 0 12px;width:100%}.meeting-review-toolbar .meeting-tabs{margin:0 0 12px}
  .meeting-panel label{display:block;margin:12px 0}.meeting-panel input,.meeting-panel textarea{width:100%}.meeting-panel select{max-width:250px}
  .meeting-panel dl{display:grid;grid-template-columns:120px 1fr;gap:16px;margin:28px 0}.meeting-panel dd{margin:0}
  @media(max-width:700px){.meetings-page{padding:20px}.page-heading,.meeting-preview,.speaker-row{flex-direction:column;align-items:stretch}.meeting-card-heading{align-items:flex-start}.meeting-panel{padding:18px}}
+ .detail-view{display:flex;flex-direction:column;min-height:0;overflow:hidden;flex:1}.detail-view>.page-heading,.meeting-review-toolbar,.back-to-meetings{flex-shrink:0}.back-to-meetings{align-self:flex-start}.detail-view .meeting-panel{min-height:0;flex:1;overflow:auto}.detail-view .meeting-panel.contained{display:flex;flex-direction:column;overflow:hidden}.contained>.table-toolbar,.contained>.help,.contained>.meeting-card-heading{flex-shrink:0}.panel-scroll{min-height:0;overflow:auto;flex:1;overscroll-behavior:contain;padding-right:10px}.meeting-summary{max-height:18vh;overflow:auto;flex-shrink:0}.turn-name{display:flex;align-items:center;gap:8px}
 </style>

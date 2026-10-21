@@ -86,3 +86,6 @@
 @keyframes recording-march{to{stroke-dashoffset:-24}}
 .live-preview-note{margin:8px 4px 20px;line-height:1.8}
 @media(prefers-reduced-motion:reduce){.activity,.spinner,.recording-outline rect{animation:none}}
+
+.recorder-modes{display:flex;align-self:center;gap:4px;background:#29232d;padding:4px;border-radius:24px;margin:0 0 18px;flex-shrink:0}.recorder-modes button{background:transparent;border:0;color:#fff;border-radius:20px;padding:8px 22px}.recorder-modes button.selected{background:#675364}.recorder-modes button:disabled{opacity:.65}.compact .recorder-modes{margin:0 0 8px}.compact .recorder-modes button{padding:4px 16px}
+.recorder-modes button:hover:not(:disabled){background:#554550;color:#fff}.recorder-modes button.selected:hover:not(:disabled){background:#756171;color:#fff}

@@ -3,7 +3,7 @@
  import Icon from './Icon.svelte';
  import type {OrbPhase} from '../recorder-state';
  import {paintOrb} from '../orb-art';
- let {phase,spectrum=[],timer='0:00',disabled=false,label,activate}:{phase:OrbPhase;spectrum?:number[];timer?:string;disabled?:boolean;label:string;activate:()=>void}=$props();
+ let {variant='dictation',phase,spectrum=[],timer='0:00',disabled=false,label,activate}:{variant?:'dictation'|'meeting';phase:OrbPhase;spectrum?:number[];timer?:string;disabled?:boolean;label:string;activate:()=>void}=$props();
  let canvas:HTMLCanvasElement;
  onMount(()=>{
   const context=canvas.getContext('2d');if(!context)return;
@@ -30,7 +30,7 @@
     const size=canvas.clientWidth,dpr=Math.min(devicePixelRatio||1,2);
     if(canvas.width!==Math.round(size*dpr)){canvas.width=Math.round(size*dpr);canvas.height=canvas.width;}
     context!.setTransform(canvas.width/440,0,0,canvas.width/440,0,0);
-    paintOrb(context!,phase,motion.matches?0:time,smoothed,motion.matches,shape);
+    paintOrb(context!,phase,motion.matches?0:time,smoothed,motion.matches,shape,variant==='meeting');
     blend=Math.min(1,blend+dt/.55);
     if(blend<1&&outgoing.width){context!.save();context!.setTransform(1,0,0,1,0,0);context!.globalAlpha=1-blend*blend*(3-2*blend);context!.drawImage(outgoing,0,0,canvas.width,canvas.height);context!.restore();}
    }

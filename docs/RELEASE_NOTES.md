@@ -1,12 +1,10 @@
-# Faster meeting imports and easier review
+# One recorder, two modes
 
-Compatible recordings now skip audio re-encoding. Import statuses distinguish queued extraction, conversion and upload. Meeting playback and review tabs stay visible while scrolling; turn editing can rename the selected speaker, and transcript search alignment is fixed. Settings displays the full app version and Git revision. Original transcript evidence remains in JSON exports and Restore original turn.
+Switch between Dictation and Meeting on the recorder. Meeting capture uses a pink-and-gold orb, device selection, live levels and microphone/system mute controls. Transcripts and Meetings now have separate library icons below the navigation divider.
 
-# Meeting workspace refinements
+Meeting brief and transcript cards scroll internally, keeping the full-width audio player and review tabs visible. A pencil beside the speaker name opens turn editing; Save applies text, speaker assignment and name changes together.
 
-Returning to Meetings now opens the library, with Record and Import actions together in its header. Speaker editing has cleaner spacing, save confirmations and action errors use gold toasts, and animated indicators show processing and active recording. Meeting audio uses the existing play, pause, and seek controls.
-
-Meetings now sits directly below Recorder. Import through a file picker or drop zone, set a title and recording date, and see a processing card immediately. Background imports stay visible across navigation, including failures. Meeting audio retention lives in Settings → Meetings. Device selectors show fuller Windows names, recording controls collapse again, and brief citations are constrained to valid transcript evidence. Existing failed briefs can be regenerated without re-transcribing.
+Compatible imports skip unnecessary audio encoding. Imports create processing cards immediately and continue across navigation. Settings displays the full version and source revision. Meeting retention, gold save/error toasts and animated processing indicators remain available.
 
 Record a meeting using your microphone and system audio, or import an audio or video file. Video imports save only the extracted audio. AssemblyAI provides speaker-labelled transcripts and OpenAI Luna produces the meeting brief. Add both provider keys in Settings.
 
