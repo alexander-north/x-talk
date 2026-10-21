@@ -1,6 +1,6 @@
 # Meeting capture recovery
 
-Save or discard a meeting normally after a device failure or the recording duration limit. Repeated playback failures each display their own error toast.
+Save or discard a meeting normally after a device failure or the recording duration limit. Repeated playback failures each display their own error toast. Canceling an audio download does not report it as saved.
 
 # Stable meeting recorder layout
 

@@ -355,7 +355,7 @@ pub async fn meeting_copy(app: tauri::AppHandle, id: String, detailed: Option<bo
     .await
 }
 #[tauri::command]
-pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<()> {
+pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<bool> {
     let state = app.state::<AppState>();
     let _activity = state.worker_activity.read().await;
     if state.shutting_down.load(Ordering::Acquire) {
@@ -375,12 +375,17 @@ pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<()> {
             &id[..8],
             source.extension().unwrap_or_default().to_string_lossy()
         );
-        if let Some(dest) = handle
+        let Some(dest) = handle
             .dialog()
             .file()
             .set_file_name(filename)
             .blocking_save_file()
-            .and_then(|p| p.into_path().ok())
+        else {
+            return Ok(false);
+        };
+        let dest = dest
+            .into_path()
+            .map_err(|_| AppError::input("Choose a local file destination."))?;
         {
             let parent = dest
                 .parent()
@@ -393,7 +398,7 @@ pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<()> {
             }
             std::fs::copy(source, dest)?;
         }
-        Ok(())
+        Ok(true)
     })
     .await
 }
