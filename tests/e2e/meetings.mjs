@@ -214,4 +214,38 @@ describe('Meetings native acceptance',()=>{
   await expect($('.meeting-library')).toHaveText(expect.stringContaining('Interrupted source'));
  });
 
+ it('paginates cards, searches all meetings, and clamps after deletion',async()=>{
+  await $('button[aria-label="Recorder"]').click();await $('button[aria-label="Meetings"]').click();
+  for(let i=0;i<26;i++){
+   const file=path.resolve(`.tmp/page-${i}.wav`),wav=Buffer.alloc(44+32000);
+   wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(32000,40);wav.writeInt16LE(i+1,44);writeFileSync(file,wav);
+   const preview=await command('meeting_preview',{path:file});await command('meeting_import',{token:preview.token,title:`Page fixture ${String(i).padStart(2,'0')}`,callAt:null});
+  }
+  await $('input[aria-label="Search meetings"]').setValue('Page fixture');
+  await $('select[aria-label="Meetings per page"]').selectByAttribute('value','25');
+  await browser.waitUntil(async()=>await browser.execute(()=>document.querySelectorAll('.meeting-card').length)===25);
+  await $('button[aria-label="Next meetings page"]').click();
+  await expect($('.pagination')).toHaveText(expect.stringContaining('26–26 of 26'));
+  const rows=(await command('meetings_list')).filter(r=>r.title.startsWith('Page fixture'));
+  const last=rows.at(-1);await browser.waitUntil(async()=>['complete','failed'].includes((await command('meeting_get',{id:last.id})).meeting.transcription_status),{timeout:60000});
+  const detail=await command('meeting_get',{id:last.id});await command('meeting_delete',{id:last.id,revision:detail.meeting.revision});
+  await expect($('.pagination')).toHaveText(expect.stringContaining('1–25 of 25'));
+  await $('input[aria-label="Search meetings"]').setValue(rows[0].title);
+  await expect($('.pagination')).toHaveText(expect.stringContaining('1–1 of 1'));
+  await $('input[aria-label="Search meetings"]').setValue('Page fixture');
+  await $('select[aria-label="Meetings per page"]').selectByAttribute('value','50');
+  await expect($('button[aria-label="Next meetings page"]')).toBeDisabled();
+ });
+ it('keeps both recorder modes within the pane across window heights',async()=>{
+  await $('button[aria-label="Recorder"]').click();
+  try{for(const mode of ['Dictation','Meeting']){
+   await $('.recorder-modes').$(`button=${mode}`).click();
+   for(const width of [520,1000])for(const height of [460,520,600,649,651,710,730,780,900,1080]){
+    await browser.setWindowSize(width,height);await browser.pause(100);
+    const layout=await browser.execute(()=>{const main=document.querySelector('.recording-home'),orb=main.querySelector('.record-orbit').getBoundingClientRect(),body=main.getBoundingClientRect(),toggle=document.querySelector('.recorder-modes').getBoundingClientRect(),content=main.querySelector('.home-outputs,.meeting-sources')?.getBoundingClientRect();return {contentTop:content?.top??body.bottom,overflow:main.scrollHeight-main.clientHeight,orbTop:orb.top,orbBottom:orb.bottom,top:body.top,bottom:body.bottom,toggleBottom:toggle.bottom,height:innerHeight};});
+    if(layout.overflow>1||layout.orbTop<layout.top||layout.orbBottom>layout.bottom||layout.orbBottom>layout.contentTop||layout.toggleBottom>layout.height)throw Error(`Recorder overflow ${mode} ${width}×${height}: ${JSON.stringify(layout)}`);
+   }
+  }}finally{await browser.setWindowSize(1100,800);}
+ });
+
 });

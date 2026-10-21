@@ -61,6 +61,7 @@ describe('Warm glass recorder and serial processing',()=>{
  it('imports into a locked transcription state and preserves audio on cancellation',async()=>{
   const entry=await importRecording(false);
   await expect($('.glass-orb')).toBeDisabled();
+  if(await browser.execute(()=>getComputedStyle(document.querySelector('.glass-orb')).cursor)!=='not-allowed')throw Error('Disabled recorder must show forbidden cursor');
   if(!await rejected('capture_action',{action:'start'}))throw Error('Recording was admitted during processing');
   if(!await rejected('import_audio'))throw Error('Second import was admitted');
   if(!await rejected('retry',{id:entry.id,revision:entry.revision,kind:'transcribe'}))throw Error('Retry was admitted during processing');

@@ -17,12 +17,29 @@ suite('Meeting native recording',()=>{
  it('shows the native-timed notice, blocks conflicting dictation, and saves on normal Stop',async()=>{
   await $('button[aria-label="Recorder"]').click();
   await $('.recorder-modes').$('button=Meeting').click();
+  await expect($('.monitoring-status')).toHaveText('Checking levels · no audio is saved');
+  await expect($('meter[aria-label="Microphone level"]')).toBeDisplayed();
+  await expect($('meter[aria-label="System audio level"]')).toBeDisplayed();
+  const before=(await command('meetings_list')).length;
+  if((await command('meeting_capture_status')).id)throw Error('Preview started a recording');
+  await $('button[aria-label="Settings"]').click();
+  await $('button[aria-label="Recorder"]').click();
+  await expect($('.monitoring-status')).toHaveText('Checking levels · no audio is saved');
+  if((await command('meetings_list')).length!==before)throw Error('Preview admitted a meeting');
   await start();
+  const cursor=await browser.execute(()=>getComputedStyle(document.querySelector('.recorder-modes button:disabled')).cursor);
+  if(cursor!=='not-allowed')throw Error('Disabled control is missing forbidden cursor');
   const active=await command('meeting_capture_status');
   if(!active.active)throw Error('Meeting did not start');
   await expect($('.responsibility')).toHaveText("You are responsible for letting everyone know they're being recorded.");
   let rejected=false;try{await command('capture_action',{action:'start'});}catch{rejected=true;}
   if(!rejected||!(await command('meeting_capture_status')).active)throw Error('Dictation interfered with meeting capture');
+  for(const height of [460,650]){
+   await browser.setWindowSize(520,height);await browser.pause(100);
+   const fits=await browser.execute(()=>{const main=document.querySelector('.meeting-recorder'),orb=main.querySelector('.record-orbit').getBoundingClientRect(),sources=main.querySelector('.meeting-sources').getBoundingClientRect();return {scroll:main.scrollHeight,height:main.clientHeight,orbTop:orb.top,orbBottom:orb.bottom,sourceTop:sources.top,top:main.getBoundingClientRect().top};});
+   if(fits.scroll>fits.height+1||fits.orbBottom>fits.sourceTop||fits.orbTop<fits.top){await browser.saveScreenshot('.tmp/active-meeting-overflow.png');throw Error(`Active meeting controls overflow at ${height}: ${JSON.stringify(fits)}`);}
+  }
+  await browser.setWindowSize(1100,800);
   await browser.waitUntil(async()=>(await command('meeting_capture_status')).elapsed>=15.2,{timeout:20000,interval:250});
   await expect($('.responsibility')).not.toExist();
   await $('button[aria-label="Settings"]').click();

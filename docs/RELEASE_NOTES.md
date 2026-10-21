@@ -1,3 +1,7 @@
+# Device levels and responsive recording
+
+Meeting mode now shows live device meters before recording, without saving audio. Peak meters use a decibel scale and hold short peaks so quieter signals remain visible. Disabled controls use the forbidden cursor, the recorder scales with available space, and Meetings shares Transcripts’ pagination controls. Normal Stop also bounds both source tracks to the same session duration.
+
 # One recorder, two modes
 
 Switch between Dictation and Meeting on the recorder. Meeting capture uses a pink-and-gold orb, device selection, live levels and microphone/system mute controls. Transcripts and Meetings now have separate library icons below the navigation divider.

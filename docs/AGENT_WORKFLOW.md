@@ -132,6 +132,7 @@ Keep the Windows build checkout on a Windows drive, for example `C:\dev\x-talk`.
 
 - Designate one source checkout as authoritative. Copy source/configuration, assets, prompts, license files and required media resources; do not copy `.env` or unrelated scratch data.
 - Preserve each environment's own `node_modules` and Rust `target` directories for incremental builds. Do not share platform-specific dependency/build directories between Linux and Windows.
+- Run Rust desktop integration tests before building the UI acceptance executable: Cargo can replace `target/debug/x-talk.exe` with a binary using different features/configuration. Re-run `desktop:test-build` before WebDriver if a later Cargo test built that binary.
 - Do not synchronize files while the native compiler, packager, or tests are using them. After syncing, rebuild the affected executable before claiming to test the new source. Set `XTALK_GIT_COMMIT` to the source checkout’s eight-character Git revision (append `-dirty` for uncommitted builds) when building a mirror without Git metadata; do not substitute the source fingerprint. Git checkouts derive this automatically.
 - Do not assume a scratch workspace is a Git checkout or suitable for `scripts/release.py`. Final release packaging requires a clean, committed source checkout matching the build.
 - Keep local bootstrap/sync scripts in `.tmp/` and do not depend on a prior session's absolute paths, installed versions, or temporary helper scripts.

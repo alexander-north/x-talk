@@ -2,6 +2,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {writable} from 'svelte/store';
 export interface CaptureStatus {id:string|null;active:boolean;finalizing:boolean;elapsed:number;microphone:boolean;system:boolean;microphone_muted:boolean;system_muted:boolean;microphone_level:number;system_level:number;error:string|null;warning:string|null}
 export const captureStatus=writable<CaptureStatus|null>(null);
+export interface MonitorStatus {active:boolean;microphone_level:number;system_level:number;error:string|null}
 export interface CaptureOptions {microphone:boolean;system:boolean;microphone_device:string|null;output_device:string|null}
 export type Stage='importing'|'extracting'|'converting'|'queued'|'preparing'|'waiting_for_keys'|'submitting'|'polling'|'briefing'|'complete'|'failed'|'submission_unknown'|'recovered';
 export interface Summary {call_at:string;id:string;title:string;added_at:string;duration:number|null;status:Stage;preview:string|null;speakers:number;audio_available:boolean;revision:number}
@@ -16,6 +17,7 @@ export type Edit={kind:'metadata';title:string;call_at:string}|{kind:'correct';t
 export const meetings={
  play:(id:string,start=0,paused=false)=>invoke<void>('meeting_play',{id,start,paused}),
  devices:()=>invoke<{microphones:{id:string;name:string}[];outputs:{id:string;name:string}[]}>('meeting_devices'),
+ monitor:(options:CaptureOptions|null)=>invoke<MonitorStatus>('meeting_monitor',{options}),
  captureStatus:()=>invoke<CaptureStatus>('meeting_capture_status'),
  start:(options:CaptureOptions)=>invoke<void>('meeting_start',{options}),
  stop:(discard=false)=>invoke<string|null>('meeting_stop',{discard}),

@@ -86,3 +86,23 @@
 
 /* Leave room for the mode switch and source controls in the small window. */
 .app.compact .recording-home{--orb-size:108px;padding-top:34px;gap:10px}.app.compact .recording-focus{padding-bottom:40px}
+
+/* Size to the actual recorder pane, after banners and mode switch take their space. */
+.app .recording-home{container-type:size;display:flex;justify-content:space-between;padding:8px 28px 10px;gap:10px;overflow:hidden}
+.app .recording-home .recording-focus{container-type:size;flex:1 1 0;min-height:0;width:100%;display:grid;place-items:center;padding:0;gap:0}
+.app .recording-home .record-orbit{--orb-size:clamp(42px,min(65cqh,45cqw),210px);width:var(--orb-size);height:var(--orb-size);margin:0}
+.app .recording-home .glass-orb .orb-symbol svg{width:calc(var(--orb-size)*.51);height:calc(var(--orb-size)*.51)}
+.app .recording-home .glass-orb .stop-glyph{width:calc(var(--orb-size)*.35);height:calc(var(--orb-size)*.35);min-width:42px;min-height:42px}
+.app .recording-home .home-outputs{flex:0 1 auto;min-height:0;padding:0 16px 28px 0}
+.app .recording-home .home-outputs .output-card{min-height:0}
+.app .recording-home .home-output{height:clamp(36px,23cqh,238px);min-height:0;padding:6px 18px 12px}
+.app .recording-home .text-heading{padding:8px 18px 2px}
+.app .recording-home .home-outputs .card-front{transform:translate(16px,28px)}
+.app .recording-home .recorder-footer{margin-top:0;padding-top:0;flex-shrink:0}
+.app.compact .recording-home{padding:8px 16px;gap:6px}
+.app.compact .recording-home .record-orbit{--orb-size:clamp(36px,min(65cqh,35cqw),108px)}
+.app.compact .recording-home .recording-focus{min-height:0;padding:0}
+.app :is(button,input,select,textarea):disabled,.app button:disabled *{cursor:not-allowed}
+
+.app label:has(:disabled){cursor:not-allowed}
+.app .record-orb.glass-orb:disabled{cursor:not-allowed}

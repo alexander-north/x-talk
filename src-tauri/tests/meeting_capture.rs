@@ -153,6 +153,34 @@ async fn windows_dual_source_stop_saves_timed_audio() {
             );
         }
     }
+    for track in &journal.tracks {
+        let data = std::fs::read(dir.path().join(&track.filename)).unwrap();
+        let samples: Vec<f32> = data
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+        let peak = samples.iter().fold(0.0_f32, |p, v| p.max(v.abs()));
+        let mono: Vec<f64> = samples
+            .chunks_exact(track.channels as usize)
+            .map(|frame| frame.iter().map(|v| *v as f64).sum::<f64>() / track.channels as f64)
+            .collect();
+        let tone_peak = mono
+            .chunks((track.rate / 2) as usize)
+            .map(|window| {
+                let (mut real, mut imag) = (0.0_f64, 0.0_f64);
+                for (i, value) in window.iter().enumerate() {
+                    let phase = std::f64::consts::TAU * 440.0 * i as f64 / track.rate as f64;
+                    real += value * phase.cos();
+                    imag += value * phase.sin();
+                }
+                2.0 * (real * real + imag * imag).sqrt() / window.len() as f64
+            })
+            .fold(0.0_f64, f64::max);
+        println!(
+            "Synthetic source check: microphone={}, peak={peak:.6}, tone_440_peak={tone_peak:.6}",
+            track.microphone
+        );
+    }
     mix_capture(&tools, dir.path(), &journal).await.unwrap();
     let info = x_talk::meetings::media::inspect(&tools, &dir.path().join("prepared.m4a"))
         .await
@@ -163,4 +191,114 @@ async fn windows_dual_source_stop_saves_timed_audio() {
         "Native dual-source Stop verified: {:.3}s, two synchronized source tracks, audio-only mix.",
         journal.elapsed
     );
+}
+
+#[tokio::test]
+#[ignore = "plays a quiet tone through Windows output; coordinate with the owner"]
+async fn monitor_levels_match_saved_samples_without_monitor_files() {
+    use x_talk::meetings::capture::Monitor;
+    let root = tempfile::tempdir().unwrap();
+    let tone = root.path().join("level-tone.wav");
+    let mut wav = hound::WavWriter::create(
+        &tone,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 24000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for n in 0..24000 {
+        wav.write_sample(
+            ((n as f32 * 440.0 * std::f32::consts::TAU / 24000.0).sin() * 1500.0) as i16,
+        )
+        .unwrap();
+    }
+    wav.finalize().unwrap();
+    let tools = Ffmpeg {
+        ffmpeg: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/ffmpeg.exe"),
+        ffprobe: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/ffprobe.exe"),
+    };
+    let options = Options {
+        microphone: false,
+        system: true,
+        microphone_device: None,
+        output_device: None,
+    };
+    let monitor = Monitor::start(options.clone()).unwrap();
+    let playback = play(
+        &tools,
+        &tone,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(PlaybackControl::new(0.0, false)),
+        0.0,
+    );
+    let sampling = async {
+        let mut peak = 0.0_f32;
+        for _ in 0..15 {
+            monitor.renew();
+            let state = monitor.status();
+            assert!(state.error.is_none(), "{:?}", state.error);
+            peak = peak.max(state.system_level);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        peak
+    };
+    let (played, preview_peak) = tokio::join!(playback, sampling);
+    played.unwrap();
+    assert!(preview_peak > 0.0001, "No output signal in monitor");
+    // The lease must release devices if the frontend stops renewing it.
+    tokio::time::sleep(Duration::from_millis(2300)).await;
+    assert!(!monitor.status().active);
+    assert!(monitor.expired());
+    drop(monitor);
+    assert_eq!(
+        std::fs::read_dir(root.path()).unwrap().count(),
+        1,
+        "Preview saved audio"
+    );
+    let session = Session::start(
+        uuid::Uuid::new_v4().to_string(),
+        root.path().join("capture"),
+        options,
+    )
+    .unwrap();
+    let playback = play(
+        &tools,
+        &tone,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(PlaybackControl::new(0.0, false)),
+        0.0,
+    );
+    let sampling = async {
+        let mut peak = 0.0_f32;
+        for _ in 0..15 {
+            peak = peak.max(session.status().system_level);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        peak
+    };
+    let (played, recording_peak) = tokio::join!(playback, sampling);
+    played.unwrap();
+    let journal = session.finish().unwrap();
+    let bytes = std::fs::read(
+        root.path()
+            .join("capture")
+            .join(&journal.tracks[0].filename),
+    )
+    .unwrap();
+    let saved_peak = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        (recording_peak - saved_peak).abs() < 0.002,
+        "Meter {recording_peak} / saved {saved_peak}"
+    );
+    assert!(
+        (preview_peak - saved_peak).abs() < 0.005,
+        "Preview {preview_peak} / saved {saved_peak}"
+    );
+    println!("Synthetic tone peaks: input={:.6}, preview={preview_peak:.6}, recording={recording_peak:.6}, saved={saved_peak:.6}",1500.0/32768.0);
 }

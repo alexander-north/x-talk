@@ -25,6 +25,7 @@ pub struct PresetTest {
 }
 pub struct AppState {
     pub meeting_capture: Mutex<Option<Arc<crate::meetings::capture::Session>>>,
+    pub meeting_monitor: Mutex<Option<crate::meetings::capture::Monitor>>,
     pub meeting_active: AtomicBool,
     pub meetings: crate::meetings::store::MeetingStore,
     pub meetings_wake: Arc<Notify>,
@@ -413,6 +414,7 @@ pub fn run() {
             } else { meeting_provider };
             app.manage(AppState {
                 meeting_capture: Mutex::new(None),
+                meeting_monitor: Mutex::new(None),
                 meeting_active: AtomicBool::new(false),
                 meetings: meetings.clone(),
                 meetings_wake: Arc::new(Notify::new()),
@@ -568,6 +570,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::meetings::commands::meeting_play,
             crate::meetings::commands::meeting_devices,
+            crate::meetings::commands::meeting_monitor,
             crate::meetings::commands::meeting_capture_status,
             crate::meetings::commands::meeting_start,
             crate::meetings::commands::meeting_stop,

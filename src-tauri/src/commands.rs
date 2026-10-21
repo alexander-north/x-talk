@@ -184,6 +184,10 @@ pub async fn do_capture(app: &tauri::AppHandle, action: &str) -> Result<()> {
         {
             return Err(AppError::input("Application is shutting down."));
         }
+        s.meeting_monitor
+            .lock()
+            .map_err(|_| AppError::input("Audio monitor unavailable."))?
+            .take();
         let active = s
             .capture
             .state

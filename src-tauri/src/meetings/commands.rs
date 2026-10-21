@@ -531,6 +531,59 @@ pub fn meeting_capture_status(app: tauri::AppHandle) -> Result<super::capture::S
         .as_ref()
         .map_or_else(super::capture::Status::default, |s| s.status()))
 }
+/// Preview has no writer, meeting row, provider request or recording indicator.
+#[tauri::command]
+pub async fn meeting_monitor(
+    app: tauri::AppHandle,
+    options: Option<super::capture::Options>,
+) -> Result<super::capture::MonitorStatus> {
+    let state = app.state::<AppState>();
+    let _controls = state.controls.lock().await;
+    let handle = app.clone();
+    blocking(move || {
+        let state = handle.state::<AppState>();
+        let mut preview = state
+            .meeting_monitor
+            .lock()
+            .map_err(|_| AppError::input("Audio monitor unavailable."))?;
+        let recording = state.meeting_active.load(Ordering::Acquire)
+            || state
+                .capture
+                .state
+                .lock()
+                .map_err(|_| AppError::input("Capture unavailable."))?
+                .active;
+        let options = options.filter(|o| {
+            (o.microphone || o.system) && !recording && !state.shutting_down.load(Ordering::Acquire)
+        });
+        let Some(options) = options else {
+            preview.take();
+            return Ok(super::capture::MonitorStatus::default());
+        };
+        // Offline acceptance must never open the owner's microphone implicitly.
+        #[cfg(feature = "test-providers")]
+        if crate::test_support::enabled()
+            && std::env::var("XTALK_E2E_CAPTURE").as_deref() != Ok("1")
+        {
+            return Ok(super::capture::MonitorStatus {
+                active: true,
+                ..Default::default()
+            });
+        }
+        if preview
+            .as_ref()
+            .is_none_or(|p| p.options != options || p.expired())
+        {
+            preview.take();
+            *preview = Some(super::capture::Monitor::start(options)?);
+        }
+        let preview = preview.as_ref().unwrap();
+        preview.renew();
+        Ok(preview.status())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn meeting_start(app: tauri::AppHandle, options: super::capture::Options) -> Result<()> {
     let state = app.state::<AppState>();
@@ -554,7 +607,17 @@ pub async fn meeting_start(app: tauri::AppHandle, options: super::capture::Optio
     state.cues.begin_capture();
     let id = id();
     let directory = state.meetings.root.join("audio").join(&id);
-    let result = blocking(move || super::capture::Session::start(id, directory, options)).await;
+    let handle = app.clone();
+    let result = blocking(move || {
+        handle
+            .state::<AppState>()
+            .meeting_monitor
+            .lock()
+            .map_err(|_| AppError::input("Audio monitor unavailable."))?
+            .take();
+        super::capture::Session::start(id, directory, options)
+    })
+    .await;
     match result {
         Ok(session) => {
             *state

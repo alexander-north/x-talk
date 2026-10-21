@@ -23,13 +23,114 @@ pub struct Status {
     pub error: Option<String>,
     pub warning: Option<String>,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Options {
     pub microphone: bool,
     pub system: bool,
     pub microphone_device: Option<String>,
     pub output_device: Option<String>,
 }
+/// Holds peaks across empty WASAPI passes; does not alter audio samples.
+#[derive(Default)]
+pub struct PeakMeter {
+    value: f32,
+    held_until: f64,
+    updated: f64,
+}
+impl PeakMeter {
+    pub fn update(&mut self, peak: f32, now: f64, muted: bool) -> f32 {
+        if muted {
+            self.value = 0.0;
+            self.held_until = now;
+        }
+        let decay = (now - self.updated.max(self.held_until)).max(0.0);
+        self.value *= 10.0_f32.powf(-24.0 * decay as f32 / 20.0);
+        if !muted && peak.is_finite() && peak > 0.0 && peak >= self.value {
+            self.value = peak.min(1.0);
+            self.held_until = now + 0.25;
+        }
+        self.updated = now;
+        self.value
+    }
+}
+#[derive(Clone, Default, Serialize)]
+pub struct MonitorStatus {
+    pub active: bool,
+    pub microphone_level: f32,
+    pub system_level: f32,
+    pub error: Option<String>,
+}
+pub struct Monitor {
+    pub options: Options,
+    status: Arc<Mutex<MonitorStatus>>,
+    stop: Arc<AtomicBool>,
+    renewed: Arc<Mutex<std::time::Instant>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl Monitor {
+    pub fn start(options: Options) -> Result<Self> {
+        let status = Arc::new(Mutex::new(MonitorStatus::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let renewed = Arc::new(Mutex::new(std::time::Instant::now()));
+        let (worker_status, worker_stop, worker_renewed, worker_options) = (
+            status.clone(),
+            stop.clone(),
+            renewed.clone(),
+            options.clone(),
+        );
+        let thread = std::thread::Builder::new()
+            .name("meeting-monitor".into())
+            .spawn(move || {
+                #[cfg(windows)]
+                let result = native::monitor(
+                    worker_options,
+                    worker_status.clone(),
+                    worker_stop,
+                    worker_renewed,
+                );
+                #[cfg(not(windows))]
+                let result: Result<()> = {
+                    let _ = (worker_options, worker_stop, worker_renewed);
+                    Err(AppError::input(
+                        "Device monitoring is supported on Windows.",
+                    ))
+                };
+                if let Ok(mut state) = worker_status.lock() {
+                    state.active = false;
+                    state.microphone_level = 0.0;
+                    state.system_level = 0.0;
+                    state.error = result.err().map(|_| "Could not monitor the selected devices. Check Windows audio settings or choose another device.".into());
+                }
+            })?;
+        Ok(Self {
+            options,
+            status,
+            stop,
+            renewed,
+            thread: Some(thread),
+        })
+    }
+    pub fn status(&self) -> MonitorStatus {
+        self.status.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+    pub fn renew(&self) {
+        if let Ok(mut renewed) = self.renewed.lock() {
+            *renewed = std::time::Instant::now();
+        }
+    }
+    pub fn expired(&self) -> bool {
+        self.thread.as_ref().is_none_or(|t| t.is_finished()) && self.status().error.is_none()
+    }
+}
+impl Drop for Monitor {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Track {
     pub filename: String,
@@ -305,7 +406,8 @@ mod native {
         bits: u16,
         float: bool,
         frames: u64,
-        output: DiskWriter,
+        output: Option<DiskWriter>,
+        meter: PeakMeter,
         seen_packet: bool,
         discontinuities: u64,
         was_muted: bool,
@@ -321,7 +423,7 @@ mod native {
     impl Input {
         unsafe fn open(
             enumerator: &IMMDeviceEnumerator,
-            directory: &std::path::Path,
+            directory: Option<&std::path::Path>,
             microphone: bool,
             selected: Option<&str>,
         ) -> Result<Self> {
@@ -379,7 +481,9 @@ mod native {
                 "system.f32"
             }
             .to_string();
-            let output = DiskWriter::new(File::create(directory.join(&filename))?)?;
+            let output = directory
+                .map(|dir| DiskWriter::new(File::create(dir.join(&filename))?))
+                .transpose()?;
             Ok(Self {
                 client,
                 capture,
@@ -393,6 +497,7 @@ mod native {
                 float: tag == 3,
                 frames: 0,
                 output,
+                meter: PeakMeter::default(),
                 seen_packet: false,
                 discontinuities: 0,
                 was_muted: false,
@@ -400,11 +505,15 @@ mod native {
             })
         }
         fn zeros(&mut self, frames: u64) -> Result<()> {
+            if self.output.is_none() {
+                self.frames += frames;
+                return Ok(());
+            }
             let zero = [0u8; 8192];
             let mut bytes = frames * self.track.channels as u64 * 4;
             while bytes > 0 {
                 let count = bytes.min(zero.len() as u64) as usize;
-                self.output.write_all(&zero[..count])?;
+                self.output.as_mut().unwrap().write_all(&zero[..count])?;
                 bytes -= count as u64;
             }
             self.frames += frames;
@@ -492,7 +601,9 @@ mod native {
                             0.0
                         };
                         peak = peak.max(value.abs());
-                        self.output.write_all(&value.to_le_bytes())?;
+                        if let Some(output) = &mut self.output {
+                            output.write_all(&value.to_le_bytes())?;
+                        }
                     }
                     self.frames += count as u64;
                     Ok(())
@@ -509,11 +620,84 @@ mod native {
                 let through = ((elapsed - 0.5).max(0.0) * self.track.rate as f64) as u64;
                 self.zeros(through.saturating_sub(self.frames))?;
             }
-            Ok(peak)
+            Ok(self.meter.update(peak, elapsed, muted))
         }
         fn sync(&mut self) -> Result<()> {
-            self.output.sync()
+            if let Some(output) = &mut self.output {
+                output.sync()?;
+            }
+            Ok(())
         }
+    }
+    pub fn monitor(
+        options: Options,
+        status: Arc<Mutex<MonitorStatus>>,
+        stop: Arc<AtomicBool>,
+        renewed: Arc<Mutex<Instant>>,
+    ) -> Result<()> {
+        unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED)
+                .ok()
+                .map_err(native_error)?;
+        }
+        let _com = Com;
+        let enumerator: IMMDeviceEnumerator = unsafe {
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(native_error)?
+        };
+        let mut inputs = Vec::new();
+        unsafe {
+            if options.microphone {
+                inputs.push(Input::open(
+                    &enumerator,
+                    None,
+                    true,
+                    options.microphone_device.as_deref(),
+                )?);
+            }
+            if options.system {
+                inputs.push(Input::open(
+                    &enumerator,
+                    None,
+                    false,
+                    options.output_device.as_deref(),
+                )?);
+            }
+        }
+        let (mut counter, mut frequency) = (0, 0);
+        unsafe {
+            QueryPerformanceCounter(&mut counter).map_err(native_error)?;
+            QueryPerformanceFrequency(&mut frequency).map_err(native_error)?;
+        }
+        let epoch = ((counter as u128 * 10_000_000) / frequency as u128) as u64;
+        let clock = Instant::now();
+        for input in &inputs {
+            unsafe {
+                input.client.Start().map_err(native_error)?;
+            }
+        }
+        while !stop.load(Ordering::Acquire)
+            && renewed
+                .lock()
+                .is_ok_and(|r| r.elapsed() < Duration::from_secs(2))
+        {
+            let mut levels = MonitorStatus {
+                active: true,
+                ..MonitorStatus::default()
+            };
+            for input in &mut inputs {
+                let level = unsafe { input.drain(epoch, false, clock.elapsed().as_secs_f64())? };
+                if input.track.microphone {
+                    levels.microphone_level = level;
+                } else {
+                    levels.system_level = level;
+                }
+            }
+            if let Ok(mut state) = status.lock() {
+                *state = levels;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(())
     }
     #[allow(clippy::too_many_arguments)]
     pub fn record(
@@ -547,7 +731,7 @@ mod native {
             if options.microphone {
                 inputs.push(Input::open(
                     &enumerator,
-                    &directory,
+                    Some(&directory),
                     true,
                     options.microphone_device.as_deref(),
                 )?);
@@ -555,7 +739,7 @@ mod native {
             if options.system {
                 inputs.push(Input::open(
                     &enumerator,
-                    &directory,
+                    Some(&directory),
                     false,
                     options.output_device.as_deref(),
                 )?);
@@ -667,8 +851,25 @@ mod native {
                     failure = Some(e);
                 }
             }
-            if let Err(e) = input.output.finish() {
-                failure = Some(e);
+            if let Some(output) = &mut input.output {
+                if let Err(e) = output.finish() {
+                    failure = Some(e);
+                }
+            }
+            // Endpoint packets can extend beyond the Stop instant. After the
+            // writer closes, bound both source tracks to the same native clock.
+            if failure.is_none() && input.frames > target {
+                let trimmed: Result<()> = (|| {
+                    let file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(directory.join(&input.track.filename))?;
+                    file.set_len(target * input.track.channels as u64 * 4)?;
+                    file.sync_all()?;
+                    Ok(())
+                })();
+                if let Err(error) = trimmed {
+                    failure = Some(error);
+                }
             }
         }
         let _ = crate::storage::publish_journal(&journal_path, &serde_json::to_vec(&journal)?);
@@ -683,5 +884,20 @@ mod native {
             return Err(error);
         }
         Ok(journal)
+    }
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::PeakMeter;
+    #[test]
+    fn peak_survives_empty_packets_then_decays_and_mute_clears_it() {
+        let mut meter = PeakMeter::default();
+        assert_eq!(meter.update(0.1, 0.0, false), 0.1);
+        assert_eq!(meter.update(0.0, 0.2, false), 0.1);
+        let after = meter.update(0.0, 0.75, false);
+        assert!((after - 0.025118865).abs() < 0.00001);
+        assert_eq!(meter.update(0.0, 0.76, true), 0.0);
+        assert_eq!(meter.update(f32::NAN, 0.77, false), 0.0);
     }
 }

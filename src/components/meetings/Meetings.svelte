@@ -3,6 +3,7 @@
  import {listen} from '@tauri-apps/api/event';
  import {meetings,stageLabel,type Summary,type View,type Edit,type Evidence} from '../../meetings/ipc';
  import {duration,message} from '../../ipc';
+ import Pagination from '../Pagination.svelte';
  import MeetingImport from './MeetingImport.svelte';
  import {notify} from '../../notifications';
  import Activity from '../Activity.svelte';
@@ -11,6 +12,8 @@
  let {playback,refreshPlayback,recording=false}:{playback:Playback|null;refreshPlayback:()=>Promise<void>;recording?:boolean}=$props();
  const processing=(stage:string)=>['importing','extracting','converting','queued','preparing','submitting','polling','briefing'].includes(stage);
  let importing=$state(false);
+ let page=$state(0),pageSize=$state(50);
+ $effect(()=>{if(page>0&&page*pageSize>=filtered.length)page=Math.max(0,Math.ceil(filtered.length/pageSize)-1);});
  import Icon from '../Icon.svelte';
  let rows=$state<Summary[]>([]), selected=$state<View|null>(null);
  let search=$state(''), filter=$state(''), speakerFilter=$state('');
@@ -56,9 +59,9 @@
   <div class="page-heading"><div><p class="eyebrow">ROOM FOR EVERY VOICE</p><h1>Meetings <span class="count">{rows.length}</span></h1><p class="muted">The conversation, the people, and what comes next.</p></div>
    <div class="actions"><button class="primary" disabled={busy} onclick={()=>importing=true}><Icon name="upload" size={17}/>Import recording</button></div>
   </div>
-  <div class="table-toolbar"><label class="search-field"><Icon name="search" size={17}/><input aria-label="Search meetings" placeholder="Search titles and briefs…" bind:value={search}/></label></div>
+  <div class="table-toolbar"><label class="search-field"><Icon name="search" size={17}/><input aria-label="Search meetings" placeholder="Search titles and briefs…" bind:value={search} oninput={()=>page=0}/></label></div>
   <div class="meeting-library">
-   {#each filtered as row (row.id)}<article class="meeting-card">
+   {#each filtered.slice(page*pageSize,(page+1)*pageSize) as row (row.id)}<article class="meeting-card">
     <div class="meeting-card-heading"><span class="badge">{#if processing(row.status)}<Activity/>{/if}{stageLabel(row.status)}</span><button class="subtle-button" disabled={busy||['importing','extracting','converting','queued','preparing','submitting','polling'].includes(row.status)} onclick={()=>run(()=>meetings.copy(row.id),'Meeting JSON copied')}><Icon name="copy" size={15}/>Copy meeting JSON</button></div>
     <h2><button class="meeting-title" onclick={()=>open(row.id)}>{row.title}</button></h2>
     <div class="meeting-preview"><button class="text-preview" onclick={()=>open(row.id)}>{row.preview??(row.status==='failed'?'Processing needs attention. Open this recording for details.':'Your transcript and meeting brief will appear here when processing finishes.')}</button></div>
@@ -67,6 +70,7 @@
    </article>
    {:else}<div class="empty"><Icon name="heart" size={32}/><h2>{search?'No meetings found':'Every conversation has a next step'}</h2><p>{search?'Try another search.':'Import an audio or video recording to create a transcript and meeting brief.'}</p></div>{/each}
   </div>
+  <Pagination bind:page bind:pageSize total={filtered.length} noun="meetings"/>
  {:else}
   <button class="subtle-button back-to-meetings" onclick={()=>{selected=null;editTurn='';confirmation=null;readVersion++;void load();}}><Icon name="left" size={16}/>All meetings</button>
   <div class="page-heading"><div><p class="badge meeting-status">{#if processing(current.transcription_status)}<Activity/>{/if}{stageLabel(current.transcription_status)}</p><h1>{current.title}</h1><p class="muted">{duration(current.duration_seconds??0)} · {transcript?.speakers.length??0} speakers</p></div>
