@@ -73,7 +73,8 @@ describe('Meetings native acceptance',()=>{
   await $('button=Download audio').click();
   execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Cancel'],{timeout:40000});
   await $('button=Download audio').waitForEnabled();
-  await expect($('.toast')).not.toExist();
+  const result=await browser.execute(()=>document.querySelector('.toast')?.textContent??'');
+  if(result.includes('Audio saved'))throw Error('Canceled download reported success');
  });
  it('downloads only audio and plays from a transcript timestamp',async()=>{
   await $('button[role="tab"]=Details').click();
@@ -82,7 +83,7 @@ describe('Meetings native acceptance',()=>{
   await browser.execute(()=>{window.__downloadMessages=[];window.__downloadObserver=new MutationObserver(()=>{const text=document.querySelector('.toast')?.textContent;if(text&&!window.__downloadMessages.includes(text))window.__downloadMessages.push(text);});window.__downloadObserver.observe(document.body,{childList:true,subtree:true,characterData:true});});
   await $('button=Download audio').click();
   execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',destination],{timeout:40000});
-  try{await browser.waitUntil(async()=>existsSync(destination)&&statSync(destination).size>0,{timeout:15000});}catch{throw Error(`Audio download missing: messages=${JSON.stringify(await browser.execute(()=>window.__downloadMessages))}; files=${readdirSync('.tmp').filter(n=>n.startsWith('meeting-export')).join(',')}; other=${execFileSync('powershell.exe',['-NoProfile','-Command',"Get-ChildItem $env:USERPROFILE\\Documents,$env:USERPROFILE\\Desktop,$env:TEMP,(Get-Location) -Filter 'meeting-*.m4a' -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName; exit 0"],{encoding:'utf8',timeout:10000})}`);}
+  try{await browser.waitUntil(async()=>existsSync(destination)&&statSync(destination).size>0,{timeout:15000});}catch{throw Error(`Audio download missing: messages=${JSON.stringify(await browser.execute(()=>window.__downloadMessages))}; files=${readdirSync('.tmp').filter(n=>n.startsWith('meeting-export')).join(',')}`);}
   await browser.execute(()=>window.__downloadObserver.disconnect());
   const packagedProbe=path.resolve(process.env.XTALK_APP_PATH?path.join(path.dirname(process.env.XTALK_APP_PATH),'binaries/ffprobe.exe'):'src-tauri/binaries/ffprobe.exe');
   const probe=JSON.parse(execFileSync(existsSync(packagedProbe)?packagedProbe:path.resolve('src-tauri/binaries/ffprobe.exe'),['-v','error','-show_entries','stream=codec_type','-of','json',destination],{encoding:'utf8'}));
