@@ -1,6 +1,6 @@
 # Meeting capture recovery
 
-Save or discard a meeting normally after a device failure or the recording duration limit.
+Save or discard a meeting normally after a device failure or the recording duration limit. Repeated playback failures each display their own error toast.
 
 # Stable meeting recorder layout
 

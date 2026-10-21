@@ -74,7 +74,7 @@
   compact=innerWidth<=500&&innerHeight<=450;
   const media=matchMedia('(prefers-color-scheme: dark)');prefersDark=media.matches;const changed=(e:MediaQueryListEvent)=>prefersDark=e.matches;media.addEventListener('change',changed);
   void api.updateStatus().then(updateStatus.set).catch(()=>undefined);
-  const subscriptions=[listen<number[]>('capture-spectrum',e=>spectrum=e.payload),listen<UpdateStatus>('update-changed',e=>updateStatus.set(e.payload)),listen('state-changed',refreshProgress),listen('configuration-changed',refresh),listen('quit-requested',()=>guard(()=>{confirm='quit';})),listen('playback-error',e=>error=message(e.payload))];
+  const subscriptions=[listen<number[]>('capture-spectrum',e=>spectrum=e.payload),listen<UpdateStatus>('update-changed',e=>updateStatus.set(e.payload)),listen('state-changed',refreshProgress),listen('configuration-changed',refresh),listen('quit-requested',()=>guard(()=>{confirm='quit';})),listen('playback-error',e=>notify(message(e.payload),true))];
   void refresh();let polling=false;const timer=setInterval(async()=>{if(!playback||polling)return;polling=true;try{playback=await api.playbackState();}catch{/* The ordinary state refresh reports connection errors. */}finally{polling=false;}},250);
   return()=>{clearInterval(timer);media.removeEventListener('change',changed);for(const p of subscriptions)void p.then(unlisten=>unlisten());};
  });

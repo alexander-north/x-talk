@@ -36,6 +36,15 @@ while([DateTime]::UtcNow -lt $deadline) {
    $owner=Get-Process -Id $dialog.Current.ProcessId -ErrorAction SilentlyContinue
    if(!$owner -or $owner.ProcessName -ne 'x-talk'){continue}
    $handle=[IntPtr]$dialog.Current.NativeWindowHandle
+   $edits=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit)))
+   foreach($edit in $edits) {
+    if($edit.Current.Name -notmatch 'File name'){continue}
+    $value=$edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    $value.SetValue($Path)
+    $buttons=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)))
+    foreach($button in $buttons){if($button.Current.Name -in @('Open','Save')){$invoke=$button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern);$invoke.Invoke();exit 0}}
+    $lastFailure='File dialog action button was not found'
+   }
    $nativeEdit=[NativeFilePicker]::Filename($handle)
    if($nativeEdit -ne [IntPtr]::Zero){
     [NativeFilePicker]::SendMessage($nativeEdit,0x000C,[IntPtr]::Zero,$Path) | Out-Null
@@ -43,15 +52,6 @@ while([DateTime]::UtcNow -lt $deadline) {
     exit 0
    }
    $lastFailure='File name input was not found; native controls: '+[NativeFilePicker]::Controls($handle)
-   $edits=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit)))
-   foreach($edit in $edits) {
-    if($edit.Current.Name -notmatch 'File name' -and $edit.Current.AutomationId -notin @('1001','1148')){continue}
-    $value=$edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-    $value.SetValue($Path)
-    $buttons=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)))
-    foreach($button in $buttons){if($button.Current.Name -in @('Open','Save')){$invoke=$button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern);$invoke.Invoke();exit 0}}
-    $lastFailure='File dialog action button was not found'
-   }
    # Retain the native control diagnostics when UI Automation has no filename element.
   }
  } catch {$lastFailure='Native dialog elements were replaced before selection completed'}
