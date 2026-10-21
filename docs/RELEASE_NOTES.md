@@ -1,3 +1,7 @@
+# Stable meeting recorder layout
+
+The recording circle and audio controls stay in place when the recording notice disappears.
+
 # Responsive meeting activity and compact JSON
 
 Meetings now use dictation’s frequency-driven animation, responding to either audio source. The recording notice clears the full ray boundary. Default JSON copies preserve complete turns with less repetition; Copy detailed JSON retains word-level audit evidence. Meeting dates can be unknown and distinguish user-entered dates from recording timestamps. New AI briefs are instructed to preserve tentative statements and contradictions, and include validated summary citations.

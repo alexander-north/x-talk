@@ -46,8 +46,12 @@ suite('Meeting native recording',()=>{
    if(fits.scroll>fits.height+1||fits.orbBottom>fits.sourceTop||fits.noticeBottom>fits.sourceTop||fits.noticeTop<fits.rayBottom||fits.orbTop<fits.top){await browser.saveScreenshot('.tmp/active-meeting-overflow.png');throw Error(`Active meeting controls overflow at ${height}: ${JSON.stringify(fits)}`);}
   }
   await browser.setWindowSize(1100,800);
+  const geometry=()=>browser.execute(()=>['.record-orbit','.meeting-sources'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [r.x,r.y,r.width,r.height];}));
+  const beforeNoticeExpires=await geometry();
   await browser.waitUntil(async()=>(await command('meeting_capture_status')).elapsed>=15.2,{timeout:20000,interval:250});
   await expect($('.responsibility')).not.toExist();
+  const afterNoticeExpires=await geometry();
+  if(beforeNoticeExpires.flat().some((v,i)=>Math.abs(v-afterNoticeExpires.flat()[i])>1))throw Error('Recording controls moved when the notice expired');
   await $('button[aria-label="Settings"]').click();
   await expect($('button=Stop & save')).toBeDisplayed();
   await $('button[aria-label="Recorder"]').click();

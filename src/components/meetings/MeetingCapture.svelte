@@ -43,7 +43,7 @@
 </script>
 {#if visible&&$captureStatus}
  <main class="recording-home meeting-recorder" class:compact aria-label="Meeting recorder">
- <section class="recording-focus" aria-label="Meeting recording controls"><div class="record-orbit">
+ <section class="recording-focus" class:recording={$captureStatus.active} aria-label="Meeting recording controls"><div class="record-orbit">
  <GlassOrb variant="meeting" phase={completed?'complete':$captureStatus.finalizing?'transcribing':$captureStatus.active?'recording':'idle'} timer={duration($captureStatus.elapsed)} disabled={busy||dictating||$captureStatus.finalizing||(!$captureStatus.id&&!microphone&&!system)} label={completed?'New recording':$captureStatus.active?'Stop meeting recording':'Start meeting recording'} previewActivity={!!monitor?.active&&!completed} spectrum={$captureStatus.id?$captureStatus.spectrum:monitor?.spectrum??[]} activate={()=>run(toggle)}/>
  {#if $captureStatus.id}<button class="cancel-orb" aria-label="Cancel meeting recording" disabled={busy||$captureStatus.finalizing} onclick={()=>discard=true}><Icon name="close" size={38}/></button>{/if}
  {#if $captureStatus.active&&$captureStatus.elapsed<15}<p class="responsibility" role="status">You are responsible for letting everyone know they're being recorded.</p>{/if}
