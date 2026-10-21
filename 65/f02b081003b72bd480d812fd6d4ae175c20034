@@ -1,0 +1,27 @@
+package-lock.json
+  s_b7d8957ea62ed3::t_98fc0a252033d4 3,9
+package.json
+  s_b7d8957ea62ed3::t_460571bd972aea 3
+src-tauri/Cargo.lock
+  s_b7d8957ea62ed3::t_4308fcce10dca1 6292
+src-tauri/Cargo.toml
+  s_b7d8957ea62ed3::t_23d4a21c7c3127 3
+src-tauri/tauri.conf.json
+  s_b7d8957ea62ed3::t_4724bdea31f48a 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65f02b081003b72bd480d812fd6d4ae175c20034",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
