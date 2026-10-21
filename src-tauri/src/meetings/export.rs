@@ -184,8 +184,10 @@ pub fn json_with_detail(meeting: &Meeting, detailed: bool) -> Result<String> {
     value["brief"]["origin"] = "ai_generated".into();
     value["brief"]["suggested_follow_ups_definition"] = "AI suggestions, not participant commitments or questions necessarily asked in the meeting.".into();
     if !detailed {
-        for turn in value["transcript"]["turns"]
-            .as_array_mut()
+        for turn in value
+            .get_mut("transcript")
+            .and_then(|transcript| transcript.get_mut("turns"))
+            .and_then(serde_json::Value::as_array_mut)
             .into_iter()
             .flatten()
         {

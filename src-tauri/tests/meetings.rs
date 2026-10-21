@@ -755,3 +755,15 @@ fn new_briefs_require_summary_evidence_but_legacy_briefs_remain_readable() {
         assert!(parse_generated_brief(&invalid.to_string(), transcript).is_err());
     }
 }
+
+#[test]
+fn pending_exports_keep_absent_transcript_explicit() {
+    let meeting = Meeting::new("Pending import".into(), SourceKind::Audio, None);
+    for detailed in [false, true] {
+        let exported: serde_json::Value =
+            serde_json::from_str(&export::json_with_detail(&meeting, detailed).unwrap()).unwrap();
+        assert!(exported["transcript"].is_null());
+        assert_eq!(exported["transcription_status"], "queued");
+        assert!(exported["brief"]["content"].is_null());
+    }
+}
