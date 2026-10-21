@@ -2,10 +2,14 @@
  import {onMount} from 'svelte';
  import {meetings,captureStatus} from '../../meetings/ipc';
  import {duration,message} from '../../ipc';
+ import {notify} from '../../notifications';
+ $effect(()=>{if(error)notify(error,true);});
  import Icon from '../Icon.svelte';
- let {visible=false,compact=false,dictating=false}:{visible?:boolean;compact?:boolean;dictating?:boolean}=$props();
+ let {setup=$bindable(false),compact=false,dictating=false}:{setup?:boolean;compact?:boolean;dictating?:boolean}=$props();
+ let setupDialog=$state<HTMLDialogElement>();
+ $effect(()=>{if(setup&&setupDialog&&!setupDialog.open){setupDialog.showModal();void run(async()=>{devices=await meetings.devices();});}});
  let expanded=$state(true);
- let setup=$state(false),busy=$state(false),error=$state(''),discard=$state(false);
+ let busy=$state(false),error=$state(''),discard=$state(false);
  let microphone=$state(true),system=$state(true),microphoneDevice=$state(''),outputDevice=$state('');
  let devices=$state<{microphones:{id:string;name:string}[];outputs:{id:string;name:string}[]}>({microphones:[],outputs:[]});
  let dialog=$state<HTMLDialogElement>();
@@ -26,19 +30,17 @@
   {#if $captureStatus.active&&$captureStatus.elapsed<15}<p class="responsibility" role="status">You are responsible for letting everyone know they're being recorded.</p>{/if}
   {#if $captureStatus.warning}<p class="banner" role="status">{$captureStatus.warning}</p>{/if}
   {#if $captureStatus.error}<p class="error-text" role="alert">{$captureStatus.error}</p>{/if}
-  {#if error}<p class="error-text" role="alert">{error}</p>{/if}
  </section>
-{:else if visible}
- <section class="meeting-capture">
-  <div class="capture-line"><button class="primary" disabled={busy||dictating} aria-expanded={setup} onclick={()=>run(async()=>{if(!setup)devices=await meetings.devices();setup=!setup;})}><Icon name="mic" size={16}/>{setup?'Close recording setup':'Record a meeting'}</button><span class="muted">System audio + your microphone</span></div>
+{:else if setup}
+ <dialog class="modal" bind:this={setupDialog} aria-labelledby="meeting-setup-title" oncancel={()=>setup=false} onclose={()=>setup=false}>
+ <div class="dialog-heading"><h2 id="meeting-setup-title">Record a meeting</h2><button class="icon-button" aria-label="Close recording setup" onclick={()=>setup=false}><Icon name="close"/></button></div>
   {#if setup}<div class="setup-grid">
    <label class="check"><input type="checkbox" bind:checked={microphone}/>Microphone</label><select bind:value={microphoneDevice} disabled={!microphone} aria-label="Meeting microphone"><option value="">Windows default microphone</option>{#each devices.microphones as d}<option value={d.id}>{d.name}</option>{/each}</select>
    <label class="check"><input type="checkbox" bind:checked={system}/>System audio</label><select bind:value={outputDevice} disabled={!system} aria-label="Meeting system output"><option value="">Windows default output</option>{#each devices.outputs as d}<option value={d.id}>{d.name}</option>{/each}</select>
    <p class="help">Choose the output your call uses. xTalk's microphone mute is separate from your conferencing app.</p>
    <button class="primary" disabled={busy||dictating||!microphone&&!system} onclick={()=>run(async()=>{await meetings.start({microphone,system,microphone_device:microphoneDevice||null,output_device:outputDevice||null});setup=false;})}>{busy?'Starting…':'Start meeting'}</button>
   </div>{/if}
-  {#if error}<p class="error-text" role="alert">{error}</p>{/if}
- </section>
+ </dialog>
 {/if}
 {#if discard}<dialog class="modal" bind:this={dialog} aria-labelledby="discard-meeting-title" oncancel={()=>discard=false} onclose={()=>discard=false}><h2 id="discard-meeting-title">Discard this meeting recording?</h2><p>The captured audio will be deleted without transcription or a provider charge.</p><div class="actions"><button disabled={busy} onclick={()=>discard=false}>Keep recording</button><button class="danger" disabled={busy} onclick={async()=>{if(await run(()=>meetings.stop(true)))discard=false;}}>Discard recording</button></div></dialog>{/if}
 <style>

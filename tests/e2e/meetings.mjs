@@ -71,6 +71,32 @@ describe('Meetings native acceptance',()=>{
   if(playback?.id!==`meeting:${id}`)throw Error('Meeting playback was not admitted');
   await command('stop_playback');
  });
+ it('uses the shared player, toast feedback and returns from other views to all meetings',async()=>{
+  await $('button[role="tab"]=Details').click();
+  await $('.meeting-audio button[aria-label="Play audio"]').click();
+  await $('.meeting-audio button[aria-label="Pause audio"]').click();
+  await browser.waitUntil(async()=>(await command('playback_state'))?.paused===true,{timeout:5000});
+  await browser.execute(()=>{const input=document.querySelector('.meeting-audio input');input.value='1';input.dispatchEvent(new Event('change',{bubbles:true}));});
+  await browser.waitUntil(async()=>{const p=await command('playback_state');return p?.paused&&Math.abs(p.position-1)<0.2;},{timeout:5000});
+  await command('stop_playback');
+  await $('button[role="tab"]=Manage speakers').click();
+  await $('.speaker-row:first-of-type button').click();
+  await expect($('.toast')).toHaveText(expect.stringContaining('Saved'));
+  await $('button[aria-label="Dismiss notification"]').click();
+  await expect($('.toast')).not.toExist();
+  await browser.saveScreenshot('.tmp/meetings-speakers-polished.png');
+  await $('button[aria-label="Settings"]').click();
+  await $('button[aria-label="Meetings"]').click();
+  await expect($('.meeting-library')).toBeDisplayed();
+  await expect($('button=Record a meeting')).toBeDisplayed();
+  await expect($('.meeting-capture')).not.toExist();
+  await $('button=Open recording ↗').click();
+  await expect($('button=Record a meeting')).not.toExist();
+  await $('button[aria-label="Recorder"]').click();
+  await $('button[aria-label="Meetings"]').click();
+  await expect($('.meeting-library')).toBeDisplayed();
+  await $('button=Open recording ↗').click();
+ });
  it('replaces a transcript atomically and preserves a manual title',async()=>{
   view=await command('meeting_get',{id});
   const previous=view.meeting.transcript.generation;
@@ -102,7 +128,7 @@ describe('Meetings native acceptance',()=>{
   await $('button[aria-label="Meetings"]').click();
   await $('button=Record a meeting').click();
   await expect($('.setup-grid')).toBeDisplayed();
-  await $('button=Close recording setup').click();
+  await $('button[aria-label="Close recording setup"]').click();
   await expect($('.setup-grid')).not.toExist();
  });
  it('admits a background import immediately and preserves it across navigation',async()=>{

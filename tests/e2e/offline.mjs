@@ -25,7 +25,7 @@ describe('Offline native acceptance',()=>{
   for(let i=0;i<24000;i++)wav.writeInt16LE(Math.round(4000*Math.sin(2*Math.PI*440*i/24000)),44+i*2);
   const source=path.join(dir,'synthetic.wav');writeFileSync(source,wav);
   await $('button=Import audio').click();
-  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',source],{timeout:40000});
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',source],{timeout:60000});
   await browser.waitUntil(async()=>{entry=(await command('history',{offset:0}))[0];return !!entry?.transformed;},{timeout:15000});
   if(entry.transcript!=='Acceptance raw transcript.'||entry.transformed!=='Acceptance transformed output.')throw Error('Incorrect pipeline output');
   if(entry.transcription_ms===null||entry.transformation_ms<1100)throw Error('Stage timings missing');
@@ -55,7 +55,7 @@ describe('Offline native acceptance',()=>{
   if(!(await command('state')).credentials.anthropic)throw Error('Cancel removed key');
   await $('button[aria-label="Remove Anthropic key"]').click();await $('button=Remove key').click();
   await browser.waitUntil(async()=>!(await command('state')).credentials.anthropic);
-  await browser.waitUntil(async()=>await browser.execute(()=>document.querySelector('.save-state').textContent.trim()===''),{timeout:4000});
+  await browser.waitUntil(async()=>await browser.execute(()=>!document.querySelector('.toast')),{timeout:6000});
   await $('button=Transformation').click();await expect($('.transformation-details select option[value="anthropic"]')).not.toExist();
  });
  it('persists the real-time setting and returns to batch when changing providers',async()=>{

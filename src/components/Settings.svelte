@@ -1,5 +1,6 @@
 <script lang="ts">
  import {onMount,untrack,tick} from 'svelte';
+ import {notify} from '../notifications';
  import {api,message,elapsedTime} from '../ipc';
  import type {AppState,Transformation,Settings} from '../types';
  import {providerNames,settingsSections,textDirty,thinkingLabel,thinkingValue,type SettingsChange} from '../settings';
@@ -25,7 +26,9 @@
  let contextDirty=$derived(context!==settings.transcription.prompt);
  let configuredText=$derived(['openai','anthropic'].filter(p=>snapshot.credentials[p]));
  let configuredSpeech=$derived(['openai','assemblyai','elevenlabs','deepgram'].filter(p=>snapshot.credentials[p]));
- $effect(()=>{if(!saved)return;const timer=setTimeout(()=>saved='',2000);return()=>clearTimeout(timer);});
+ $effect(()=>{if(saved){notify(saved);saved='';}});
+ $effect(()=>{if(error)notify(error,true);});
+ $effect(()=>{if(transformDirty||shortcutDirty||contextDirty)notify('Unsaved text changes');});
  $effect(()=>{if(removingKey&&removeDialog&&!removeDialog.open)removeDialog.showModal();});
  $effect(()=>{if(!draft){base=copy(snapshot.transformation);draft=copy(snapshot.transformation);}});
  async function task(work:()=>Promise<unknown>,label='Saved'){saving++;error='';saved='';try{await work();saved=label;return true;}catch(e){error=message(e);return false;}finally{saving--;}}
@@ -60,10 +63,10 @@
  async function test(){if(!draft)return;testing=true;testOutput='';testElapsed=null;const started=performance.now();await task(async()=>{testOutput=await api.test(copy(draft!),testInput);testElapsed=performance.now()-started;},'Test complete');testing=false;}
 </script>
 <main class="settings">
- <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>Settings</h1></div><span class="save-state" role="status">{saving?'Saving…':saved}</span></div>
+ <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>Settings</h1></div></div>
  <nav class="settings-tabs" aria-label="Settings sections">{#each settingsSections as name}<button class:chosen={section===name} onclick={()=>openSection(name)}>{name}</button>{/each}</nav>
  <section class="settings-content" aria-label={section}><h2 class="settings-section-title">{section}</h2>
- {#if error}<p class="error-text" role="alert">{error}</p>{/if}
+
  {#if section==='General'}
   <label>Appearance<select value={settings.theme} onchange={e=>{const value=e.currentTarget.value;void change(s=>({...s,theme:value}));}}><option value="system">Auto · follow system</option><option value="day">Light</option><option value="night">Dark</option></select></label>
   {#each [['topmost','Always on top'],['autostart','Start at Windows login in the tray'],['close_to_tray','Keep running when the window is closed']] as [field,label]}<label class="check"><input type="checkbox" checked={settings[field as 'topmost'|'autostart'|'close_to_tray']} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,[field]:value}));}}>{label}</label>{/each}
@@ -109,7 +112,7 @@
    <p class="help model-description">{model?.description}</p>
    {#if model?.reasoning.length}<label>Thinking<select value={thinkingValue(draft,model)} disabled={saving>0} onchange={e=>configureTransformation({reasoning:e.currentTarget.value,temperature:null})}>{#each model.reasoning as level}<option value={level}>{thinkingLabel(level)}</option>{/each}</select></label><p class="help">More thinking can increase latency and cost. Off, minimal, or low is usually enough for transcript cleanup.</p>{/if}
    {#if model?.temperature&&['none','off'].includes(thinkingValue(draft,model))}<label>Temperature (blank uses provider default)<input type="number" value={draft.temperature??''} min={model.temperature[0]} max={model.temperature[1]} step="0.1" onchange={e=>configureTransformation({temperature:e.currentTarget.value===''?null:e.currentTarget.valueAsNumber})}></label>{/if}
-   <label>System prompt<textarea class="prompt" bind:value={draft.system} rows="8"></textarea></label><label>User prompt template <small>Exactly one {'{{input}}'} placeholder</small><textarea class="prompt" bind:value={draft.user} rows="4"></textarea></label><div class="actions"><button class="primary" disabled={!transformDirty||saving>0} onclick={saveTransformation}>Save prompts</button><span class="help">{transformDirty?'Unsaved text changes':'Text saved · model choices apply immediately'}</span></div>
+   <label>System prompt<textarea class="prompt" bind:value={draft.system} rows="8"></textarea></label><label>User prompt template <small>Exactly one {'{{input}}'} placeholder</small><textarea class="prompt" bind:value={draft.user} rows="4"></textarea></label><div class="actions"><button class="primary" disabled={!transformDirty||saving>0} onclick={saveTransformation}>Save prompts</button></div>
    <details class="transformation-test"><summary>Try this transformation</summary><label>Test input<textarea bind:value={testInput} rows="4" placeholder="Paste a transcript to test this prompt"></textarea></label><button disabled={testing||snapshot.operation_busy||snapshot.capture.active||!testInput.trim()||!snapshot.credentials[draft.provider]} onclick={test}>{testing?'Processing…':'Run test'}</button><div class="text-heading"><h3>Test output{#if testElapsed!==null}<span class="output-timing" title="Elapsed time from clicking Run test until the result returned">– {elapsedTime(testElapsed)}</span>{/if}</h3><button disabled={!testOutput} onclick={()=>task(()=>api.copyTest(testOutput),'Test output copied')}>Copy</button></div><div class="output" role="textbox" aria-readonly="true" aria-multiline="true" aria-label="Transformation test output" tabindex="0">{testOutput||'Test output stays in this panel.'}</div></details>
   </div>{/if}
  {:else if section==='Delivery and Sounds'}
@@ -123,5 +126,5 @@
  <div class="dialog-heading"><h2 id="key-removal-title">Remove API key?</h2></div>
  <p>Are you sure you want to remove the saved {providerNames[removingKey]} API key?</p>
  <div class="actions dialog-actions"><button disabled={saving>0} onclick={()=>removingKey=null}>Cancel</button><button class="danger" disabled={saving>0} onclick={()=>removeKey(removingKey!)}>Remove key</button></div>
- {#if error}<p class="error-text" role="alert">{error}</p>{/if}
+
 </dialog>{/if}

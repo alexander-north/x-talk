@@ -75,3 +75,14 @@
 
 .key-removal-modal{max-width:390px}
 .shortcut-row{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-bottom:22px}.shortcut-label{font-size:12px;font-weight:550}.shortcut-row label{width:100%;margin:0}.shortcut-row .actions{flex-wrap:wrap}.shortcut-editor .hint{margin-bottom:0}
+
+/* Shared feedback and independent location/recording indicators. */
+.toast-region{margin:0;padding:0;border:0;background:transparent;overflow:visible;inset:auto;position:fixed;right:24px;bottom:58px;z-index:100;max-width:min(440px,calc(100vw - 90px));pointer-events:none}
+.toast-region .toast{position:static;pointer-events:auto;background:linear-gradient(135deg,#ffe1a0,#ecc16d);color:#443014;border:1px solid #edbc60;box-shadow:0 8px 28px #34230c30;font-size:13px;line-height:1.5}
+.toast-region .toast span{overflow-wrap:anywhere}.toast-region .icon-button{color:inherit}.toast-error{border-left:4px solid #a34527!important}
+.activity{display:inline-flex;vertical-align:middle;animation:spin 2.4s linear infinite}.badge{display:inline-flex;align-items:center;gap:6px}
+.rail-home,.rail-button{position:relative}.nav-rail .chosen{border-color:var(--accent);background:var(--accent-soft)!important}.rail-home.live{box-shadow:none}
+.recording-outline{position:absolute;inset:-4px;width:calc(100% + 8px);height:calc(100% + 8px);pointer-events:none;overflow:visible}.recording-outline rect{fill:none;stroke:var(--accent);stroke-width:3;stroke-dasharray:7 5;animation:recording-march 1s linear infinite}
+@keyframes recording-march{to{stroke-dashoffset:-24}}
+.live-preview-note{margin:8px 4px 20px;line-height:1.8}
+@media(prefers-reduced-motion:reduce){.activity,.spinner,.recording-outline rect{animation:none}}

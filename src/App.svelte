@@ -15,6 +15,10 @@
  import SettingsView from './components/Settings.svelte';
  import {settingsWriter,nextTheme} from './settings';
  import {refreshQueue} from './refresh';
+ import ToastHost from './components/ToastHost.svelte';
+ import RecordingOutline from './components/RecordingOutline.svelte';
+ import {notify} from './notifications';
+ let meetingSetup=$state(false);
  import heart from './assets/heart.png';
  let snapshot=$state<AppState|null>(null);
  let latest=$state<Entry|null>(null);
@@ -26,7 +30,6 @@
  let confirm=$state<'delete'|'clear'|'quit'|'discard'|'edit'|'text'|'unsaved'|null>(null);
  let title=$state('');let transcript=$state('');let textKind=$state<'transcript'|'transformed'>('transcript');
  let dialog=$state<HTMLDialogElement>();let clock=$state(Date.now());let refreshKey=$state(0);let compact=$state(false);let fullscreen=$state(false);let prefersDark=$state(false);let playback=$state<Playback|null>(null);
- let noticeTimer:ReturnType<typeof setTimeout>;
  let hasPending=$derived(snapshot?.jobs.some(j=>['queued','running','canceling','paused','unknown'].includes(j.status))??false);
  let paused=$derived(snapshot?.jobs.filter(j=>['paused','unknown'].includes(j.status))??[]);
  let latestJob=$derived(snapshot?.jobs.filter(j=>j.entry_id===latest?.id).sort((a,b)=>b.seq-a.seq)[0]);
@@ -36,7 +39,8 @@
  let dark=$derived(theme==='night'||theme==='system'&&prefersDark);
  $effect(()=>{if(confirm&&dialog&&!dialog.open)dialog.showModal();});
  $effect(()=>{if(!snapshot?.capture.active)return;clock=Date.now();const timer=setInterval(()=>clock=Date.now(),250);return()=>clearInterval(timer);});
- $effect(()=>{if(!notice)return;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>notice='',2500);return()=>clearTimeout(noticeTimer);});
+ $effect(()=>{if(notice){notify(notice);notice='';}});
+ $effect(()=>{if(error)notify(error,true);});
  const readUpdates=refreshQueue(async full=>{
   try{
    const [state,progress]=await Promise.all([full||!snapshot?api.state():Promise.resolve(null),api.progress()]);
@@ -67,15 +71,15 @@
   void api.updateStatus().then(updateStatus.set).catch(()=>undefined);
   const subscriptions=[listen<number[]>('capture-spectrum',e=>spectrum=e.payload),listen<UpdateStatus>('update-changed',e=>updateStatus.set(e.payload)),listen('state-changed',refreshProgress),listen('configuration-changed',refresh),listen('quit-requested',()=>guard(()=>{confirm='quit';})),listen('playback-error',e=>error=message(e.payload))];
   void refresh();let polling=false;const timer=setInterval(async()=>{if(!playback||polling)return;polling=true;try{playback=await api.playbackState();}catch{/* The ordinary state refresh reports connection errors. */}finally{polling=false;}},250);
-  return()=>{clearInterval(timer);clearTimeout(noticeTimer);media.removeEventListener('change',changed);for(const p of subscriptions)void p.then(unlisten=>unlisten());};
+  return()=>{clearInterval(timer);media.removeEventListener('change',changed);for(const p of subscriptions)void p.then(unlisten=>unlisten());};
  });
 </script>
 
 <svelte:window onkeydown={e=>{if(e.key==='Escape'&&fullscreen&&!confirm)void mode('fullscreen');}}/>
 <div class="app" role="region" aria-label="x-talk workspace" onpointermove={e=>{const r=e.currentTarget.getBoundingClientRect();e.currentTarget.style.setProperty('--light-x',`${e.clientX-r.left}px`);e.currentTarget.style.setProperty('--light-y',`${e.clientY-r.top}px`);}} data-theme={dark?'night':'day'} class:compact>
  <nav class="nav-rail" aria-label="Main navigation">
-  <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36"></button>
-  <button class="rail-button" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><span style="display:flex;align-items:center"><img src={heart} alt="" width="23" height="23"/><img src={heart} alt="" width="23" height="23" style="margin-left:-12px;margin-top:10px"/></span></button>
+  <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36">{#if snapshot?.capture.active}<RecordingOutline/>{/if}</button>
+  <button class="rail-home" class:chosen={view==='meetings'} onclick={()=>go('meetings')} aria-label="Meetings" title="Meetings" aria-current={view==='meetings'?'page':undefined}><img src={heart} alt="" width="36" height="36"/>{#if $captureStatus?.active}<RecordingOutline/>{/if}</button>
   <div class="rail-divider"></div>
   <button class="rail-button" class:chosen={view==='recordings'} onclick={()=>go('recordings')} aria-label="Recordings" title="Recordings" aria-current={view==='recordings'?'page':undefined}><Icon name="list"/></button>
   <button class="rail-button" class:chosen={view==='settings'} onclick={()=>go('settings')} aria-label="Settings" title="Settings" aria-current={view==='settings'?'page':undefined}><Icon name="gear"/></button>
@@ -86,12 +90,12 @@
  </nav>
  <div class="main-shell">
   {#if $updateStatus.phase==='available'&&view!=='settings'&&!compact}<div class="banner" role="status"><span>x-talk {$updateStatus.version} is available.</span><button onclick={()=>go('settings')}>View update</button></div>{/if}
-  {#if error}<div class="banner error" role="alert"><span>{error}</span><button class="icon-button" onclick={()=>error=''} aria-label="Dismiss error"><Icon name="close" size={16}/></button></div>{/if}
+
   {#if snapshot?.capture.error}<div class="banner error" role="alert">{snapshot.capture.error.message}</div>{/if}
   {#if snapshot?.shortcut_error}<div class="banner error">{snapshot.shortcut_error.message} Use the Recorder to record.</div>{/if}
   {#each snapshot?.recovery_warnings??[] as warning}<div class="banner recovery-warning" role="alert">{warning.message}</div>{/each}
   {#if paused.length}<section class="recovery"><div><strong>{paused.length} interrupted job{paused.length===1?'':'s'}</strong><small>Paused until you resume. Fresh recordings can continue.</small></div><button disabled={busy||snapshot?.operation_busy||paused.every(j=>j.status==='unknown')} onclick={()=>run(()=>api.recover(paused.filter(j=>j.status==='paused').map(j=>j.id),false))}>Resume available</button><button class="subtle-button" disabled={busy} onclick={()=>confirm='discard'}>Discard pending</button></section>{/if}
-  <MeetingCapture visible={view==='meetings'&&!compact} {compact} dictating={snapshot?.capture.active??false}/>
+  <MeetingCapture bind:setup={meetingSetup} {compact} dictating={snapshot?.capture.active??false}/>
   {#if compact&&$captureStatus?.id}<span class="muted" style="text-align:center">Meeting controls</span>
   {:else if loading}<main class="empty">Opening your workspace…</main>
   {:else if !snapshot}<main class="empty"><h1>Could not connect to x-talk</h1><p>{error||'Open this interface through the desktop application.'}</p><button onclick={refresh}>Retry connection</button></main>
@@ -99,11 +103,11 @@
    <Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')} importAudio={()=>run(api.import)}/>
    {#if latestJob&&['failed','unknown','paused'].includes(latestJob.status)}<div class="home-job-error stage-error" role="alert"><strong>{jobLabel(latestJob)}</strong>{#if latestJob.error}<p>{latestJob.error.message}</p>{/if}<button class="subtle-button" onclick={()=>go('recordings')}>View recording</button></div>{/if}
   {:else if view==='recordings'}<RecordingsTable {snapshot} {refreshKey} {busy} {run} {edit} {remove} clearAll={()=>{error='';confirm='clear';}} {inspect} {playback}/>
-  {:else if view==='meetings'}<Meetings/>
+  {:else if view==='meetings'}<Meetings {playback} refreshPlayback={refreshProgress} record={()=>meetingSetup=true} recording={!!snapshot?.capture.active||!!$captureStatus?.id}/>
   {:else}<SettingsView bind:this={settingsView} {snapshot} {write} {refresh} {guard}/>
   {/if}
  </div>
- {#if notice}<div class="toast" role="status"><Icon name="check" size={16}/>{notice}</div>{/if}
+ <ToastHost/>
  {#if confirm}<dialog bind:this={dialog} class="modal" class:wide={confirm==='edit'||confirm==='text'} aria-labelledby="dialog-title" oncancel={()=>confirm=null} onclose={()=>confirm=null}>
   <div class="dialog-heading"><h2 id="dialog-title">{confirm==='edit'?'Edit recording':confirm==='text'?(textKind==='transcript'?'Transcript':'Transformed output'):confirm==='delete'?'Delete this recording?':confirm==='clear'?'Clear all recordings?':confirm==='discard'?'Discard interrupted work?':confirm==='unsaved'?'Save your changes?':'Quit x-talk?'}</h2><button class="icon-button" onclick={()=>confirm=null} aria-label="Close dialog"><Icon name="close" size={18}/></button></div>
   {#if confirm==='edit'&&selected}<form onsubmit={e=>{e.preventDefault();void run(()=>api.editRecording(selected!,title,selected!.subtitle,transcript),'Recording saved').then(saved=>{if(saved)confirm=null;});}}><label>Title<input bind:value={title} maxlength="500" required></label><label>Transcript<textarea rows="8" bind:value={transcript} disabled={editPending} maxlength="1000000"></textarea></label><p class="help">{editPending?'Finish or discard pending work before editing the transcript.':'Editing the transcript preserves previous transformed output and marks it out of date. Retry transformation to refresh it.'}</p><div class="actions dialog-actions"><button type="button" onclick={()=>confirm=null}>Cancel</button><button class="primary" disabled={busy}>Save changes</button></div></form>

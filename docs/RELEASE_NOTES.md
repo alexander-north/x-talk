@@ -1,4 +1,6 @@
-# Meeting cards and smoother imports
+# Meeting workspace refinements
+
+Returning to Meetings now opens the library, with Record and Import actions together in its header. Speaker editing has cleaner spacing, save confirmations and action errors use gold toasts, and animated indicators show processing and active recording. Meeting audio uses the existing play, pause, and seek controls.
 
 Meetings now sits directly below Recorder. Import through a file picker or drop zone, set a title and recording date, and see a processing card immediately. Background imports stay visible across navigation, including failures. Meeting audio retention lives in Settings → Meetings. Device selectors show fuller Windows names, recording controls collapse again, and brief citations are constrained to valid transcript evidence. Existing failed briefs can be regenerated without re-transcribing.
 

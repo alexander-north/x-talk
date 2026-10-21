@@ -14,7 +14,7 @@ export interface View {meeting:Meeting;error:string|null;merges:number;replaceme
 export interface ImportPreview {token:string;filename:string;inspection:{duration:number;audio_streams:number;video:boolean;channels:number}}
 export type Edit={kind:'metadata';title:string;call_at:string}|{kind:'correct';turn:string;correction:{text:string|null;speaker:string|null}|null}|{kind:'name';speaker:string;name:string}|{kind:'merge';from:string;into:string}|{kind:'undo_merge'}|{kind:'retry';transcription:boolean};
 export const meetings={
- play:(id:string,start=0)=>invoke<void>('meeting_play',{id,start}),
+ play:(id:string,start=0,paused=false)=>invoke<void>('meeting_play',{id,start,paused}),
  devices:()=>invoke<{microphones:{id:string;name:string}[];outputs:{id:string;name:string}[]}>('meeting_devices'),
  captureStatus:()=>invoke<CaptureStatus>('meeting_capture_status'),
  start:(options:CaptureOptions)=>invoke<void>('meeting_start',{options}),

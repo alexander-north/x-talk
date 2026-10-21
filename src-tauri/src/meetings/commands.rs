@@ -372,7 +372,12 @@ pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn meeting_play(app: tauri::AppHandle, id: String, start: f64) -> Result<()> {
+pub async fn meeting_play(
+    app: tauri::AppHandle,
+    id: String,
+    start: f64,
+    paused: Option<bool>,
+) -> Result<()> {
     if !start.is_finite() || !(0.0..=MAX_SECONDS).contains(&start) {
         return Err(AppError::input("Invalid playback time."));
     }
@@ -404,7 +409,10 @@ pub async fn meeting_play(app: tauri::AppHandle, id: String, start: f64) -> Resu
     let start = start.min(duration);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let done = std::sync::Arc::new(tokio::sync::Notify::new());
-    let control = std::sync::Arc::new(crate::capture::PlaybackControl::new(start, false));
+    let control = std::sync::Arc::new(crate::capture::PlaybackControl::new(
+        start,
+        paused.unwrap_or(false),
+    ));
     *state
         .playback
         .lock()
