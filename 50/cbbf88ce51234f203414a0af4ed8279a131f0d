@@ -1,0 +1,82 @@
+src/components/Icon.svelte
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 10
+SPEC.md
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 47,54-56
+  s_b7d8957ea62ed3::t_43965ecf7024e6 108-110
+src/notifications.test.ts
+  s_b7d8957ea62ed3::t_1f34049f214186 1-11
+  s_b7d8957ea62ed3::t_1ba5e701d266a9 12-15
+tests/e2e/offline.mjs
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 28,58
+tests/e2e/shortcuts.mjs
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 28
+src/meetings/ipc.ts
+  s_b7d8957ea62ed3::t_94047735ae7ec8 17
+src/components/AudioPlayer.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 5,8,12
+src/components/RecordingOutline.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 1
+src/components/Settings.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 3,29-31,66,69,115,129
+src/App.svelte
+  s_b7d8957ea62ed3::t_b85b05f0d7b872 74
+  s_b7d8957ea62ed3::t_94047735ae7ec8 18-21,42-43,81-82,93,98,106,110
+tests/e2e/meetings.mjs
+  s_b7d8957ea62ed3::t_1f34049f214186 74-82,84-99,131
+  s_b7d8957ea62ed3::t_c518c63b736150 83
+src/components/ToastHost.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 1-2,5-6,8-12
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 3,7
+  s_b7d8957ea62ed3::t_a16a317c40ce84 4
+src/components/RecordingsTable.svelte
+  s_b7d8957ea62ed3::t_62d6fb96d56daa 2,39
+tests/e2e/interface.mjs
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 104
+src/components/meetings/Meetings.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 5,7-12,17,36,39-40,48,57,62,71-72,82,91,101-102,125
+  s_b7d8957ea62ed3::t_b85b05f0d7b872 107
+src/notifications.ts
+  s_b7d8957ea62ed3::t_94047735ae7ec8 1-9
+src/components/meetings/MeetingCapture.svelte
+  s_b7d8957ea62ed3::t_62d6fb96d56daa 5-6
+  s_b7d8957ea62ed3::t_94047735ae7ec8 8-10,12,34-36,43
+src/components/Recorder.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 85
+src-tauri/src/meetings/commands.rs
+  s_b7d8957ea62ed3::t_1f34049f214186 375-380,412-415
+src/style.css
+  s_b7d8957ea62ed3::t_94047735ae7ec8 78-79,81-88
+  s_b7d8957ea62ed3::t_71422f67f1ba0a 80
+src/components/Activity.svelte
+  s_b7d8957ea62ed3::t_94047735ae7ec8 1-5
+docs/RELEASE_NOTES.md
+  s_b7d8957ea62ed3::t_c518c63b736150 1
+  s_b7d8957ea62ed3::t_4729a87225654e 3
+  s_b7d8957ea62ed3::t_adb5e91325d40c 2
+package-lock.json
+  s_b7d8957ea62ed3::t_0bc6c94d10b8ff 3,9
+package.json
+  s_b7d8957ea62ed3::t_c0d74ed436dbd3 3
+src-tauri/Cargo.lock
+  s_b7d8957ea62ed3::t_e14eb9b1f68945 6292
+src-tauri/Cargo.toml
+  s_b7d8957ea62ed3::t_0aa7d828c43f72 3
+src-tauri/tauri.conf.json
+  s_b7d8957ea62ed3::t_35fe2678a7d888 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50cbbf88ce51234f203414a0af4ed8279a131f0d",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
