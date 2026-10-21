@@ -1,3 +1,7 @@
+# Meeting capture recovery
+
+Save or discard a meeting normally after a device failure or the recording duration limit.
+
 # Stable meeting recorder layout
 
 The recording circle and audio controls stay in place when the recording notice disappears.

@@ -24,6 +24,16 @@ pub struct Status {
     pub error: Option<String>,
     pub warning: Option<String>,
 }
+#[cfg_attr(not(windows), allow(dead_code))]
+impl Status {
+    fn capture_ended(&mut self, elapsed: f64, error: Option<&AppError>) {
+        self.active = false;
+        self.elapsed = elapsed;
+        self.error = error.map(|e| e.message.clone());
+        // Ending capture does not begin media finalization. Keep Save/Discard
+        // available after a device failure or the duration limit.
+    }
+}
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Options {
     pub microphone: bool,
@@ -266,6 +276,10 @@ impl Session {
         })?
     }
     pub fn finish(&self) -> Result<Journal> {
+        self.status
+            .lock()
+            .map_err(|_| AppError::input("Capture unavailable."))?
+            .finalizing = true;
         self.stop.store(true, Ordering::Release);
         let thread = self
             .thread
@@ -986,10 +1000,7 @@ mod native {
         }
         let _ = crate::storage::publish_journal(&journal_path, &serde_json::to_vec(&journal)?);
         if let Ok(mut state) = status.lock() {
-            state.active = false;
-            state.elapsed = journal.elapsed;
-            state.finalizing = true;
-            state.error = failure.as_ref().map(|e| e.message.clone());
+            state.capture_ended(journal.elapsed, failure.as_ref());
         }
         // Journal remains recoverable even if final disk sync failed.
         if let Some(error) = failure {
@@ -1002,6 +1013,29 @@ mod native {
 #[cfg(test)]
 mod meter_tests {
     use super::PeakMeter;
+    #[test]
+    fn automatic_capture_end_keeps_save_and_discard_available() {
+        for error in [
+            None,
+            Some(crate::domain::AppError::input("Device disconnected")),
+        ] {
+            let mut status = super::Status {
+                active: true,
+                ..Default::default()
+            };
+            status.capture_ended(42.0, error.as_ref());
+            assert!(!status.active);
+            assert!(!status.finalizing);
+            assert_eq!(status.elapsed, 42.0);
+            assert_eq!(status.error.is_some(), error.is_some());
+            status.finalizing = true;
+            status.capture_ended(42.0, error.as_ref());
+            assert!(
+                status.finalizing,
+                "An explicit Stop must remain busy during saving"
+            );
+        }
+    }
     #[test]
     fn device_changes_preserve_track_format() {
         let track = super::Track {
