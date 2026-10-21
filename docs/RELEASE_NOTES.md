@@ -1,3 +1,7 @@
+# Faster meeting imports and easier review
+
+Compatible recordings now skip audio re-encoding. Import statuses distinguish queued extraction, conversion and upload. Meeting playback and review tabs stay visible while scrolling; turn editing can rename the selected speaker, and transcript search alignment is fixed. Settings displays the full app version and Git revision. Original transcript evidence remains in JSON exports and Restore original turn.
+
 # Meeting workspace refinements
 
 Returning to Meetings now opens the library, with Record and Import actions together in its header. Speaker editing has cleaner spacing, save confirmations and action errors use gold toasts, and animated indicators show processing and active recording. Meeting audio uses the existing play, pause, and seek controls.

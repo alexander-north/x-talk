@@ -12,6 +12,10 @@ pub struct Inspection {
     pub audio_streams: usize,
     pub video: bool,
     pub channels: u32,
+    pub codec: String,
+    pub format: String,
+    pub start: f64,
+    pub streams: usize,
 }
 #[derive(Deserialize)]
 struct Probe {
@@ -21,11 +25,14 @@ struct Probe {
 #[derive(Deserialize)]
 struct Stream {
     codec_type: Option<String>,
+    codec_name: Option<String>,
+    start_time: Option<String>,
     channels: Option<u32>,
 }
 #[derive(Deserialize)]
 struct Format {
     duration: Option<String>,
+    format_name: Option<String>,
 }
 pub async fn content_hash(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
@@ -40,6 +47,7 @@ pub async fn content_hash(path: &Path) -> Result<String> {
         }
         hasher.update(&buffer[..count]);
     }
+    // Keep the historical byte-hash namespace compatible with existing retained files.
     Ok(format!("prepared-aac-v1:{:x}", hasher.finalize()))
 }
 
@@ -56,7 +64,8 @@ pub async fn inspect(tools: &Ffmpeg, path: &Path) -> Result<Inspection> {
                 "-protocol_whitelist".into(),
                 "file,pipe".into(),
                 "-show_entries".into(),
-                "stream=codec_type,channels:format=duration".into(),
+                "stream=codec_type,codec_name,channels,start_time:format=duration,format_name"
+                    .into(),
                 "-of".into(),
                 "json".into(),
                 path.as_os_str().into(),
@@ -91,10 +100,160 @@ pub async fn inspect(tools: &Ffmpeg, path: &Path) -> Result<Inspection> {
         duration,
         audio_streams: audio.len(),
         channels,
+        codec: first.codec_name.clone().unwrap_or_default(),
+        start: first
+            .start_time
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
+        format: probe.format.format_name.unwrap_or_default(),
+        streams: probe.streams.len(),
         video: probe
             .streams
             .iter()
             .any(|s| s.codec_type.as_deref() == Some("video")),
+    })
+}
+
+/// The formats our bundled tools can validate/play and AssemblyAI accepts.
+/// Explicit offsets beyond codec priming take the existing timeline-repair path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportPlan {
+    Copy(&'static str),
+    Extract(&'static str, &'static str),
+    Convert,
+}
+pub fn import_plan(info: &Inspection, bytes: u64) -> ImportPlan {
+    if !info.start.is_finite() || info.start.abs() > 0.05 || (!info.video && bytes > 2_200_000_000)
+    {
+        return ImportPlan::Convert;
+    }
+    if !info.video && info.streams == 1 {
+        let ext = match (info.format.as_str(), info.codec.as_str()) {
+            ("mp3", "mp3") => Some("mp3"),
+            ("flac", "flac") => Some("flac"),
+            ("ogg", "opus" | "vorbis") => Some("ogg"),
+            ("aac", "aac") => Some("aac"),
+            (
+                "wav",
+                "pcm_s16le" | "pcm_s24le" | "pcm_s32le" | "pcm_f32le" | "pcm_f64le" | "pcm_u8"
+                | "pcm_s16be" | "pcm_s24be" | "pcm_s32be",
+            ) => Some("wav"),
+            _ => None,
+        };
+        if let Some(ext) = ext {
+            return ImportPlan::Copy(ext);
+        }
+    }
+    match info.codec.as_str() {
+        "aac" | "alac" => ImportPlan::Extract("m4a", "ipod"),
+        "pcm_s16le" | "pcm_s24le" | "pcm_s32le" | "pcm_f32le" | "pcm_f64le" | "pcm_u8" => {
+            ImportPlan::Extract("wav", "wav")
+        }
+        _ => ImportPlan::Convert,
+    }
+}
+pub struct ImportedAudio {
+    pub filename: String,
+    pub info: Inspection,
+    pub plan: ImportPlan,
+}
+/// Preserve encoded packets where possible; validate before publishing any asset.
+pub async fn import_audio(
+    tools: &Ffmpeg,
+    input: &Path,
+    directory: &Path,
+    mut phase: impl FnMut(super::domain::Stage) -> Result<()> + Send,
+) -> Result<ImportedAudio> {
+    use super::domain::Stage;
+    let source = inspect(tools, input).await?;
+    let plan = import_plan(&source, input.metadata()?.len());
+    if plan != ImportPlan::Convert {
+        phase(Stage::Extracting)?;
+        let ext = match plan {
+            ImportPlan::Copy(ext) | ImportPlan::Extract(ext, _) => ext,
+            _ => unreachable!(),
+        };
+        let filename = format!("extracted.{ext}");
+        let output = directory.join(&filename);
+        let result: Result<Inspection> = async {
+            match plan {
+                ImportPlan::Copy(_) => {
+                    tokio::fs::copy(input, &output).await?;
+                }
+                ImportPlan::Extract(_, format) => {
+                    tools
+                        .run(
+                            &tools.ffmpeg,
+                            &[
+                                "-nostdin".into(),
+                                "-v".into(),
+                                "error".into(),
+                                "-protocol_whitelist".into(),
+                                "file,pipe".into(),
+                                "-i".into(),
+                                input.as_os_str().into(),
+                                "-map".into(),
+                                "0:a:0".into(),
+                                "-vn".into(),
+                                "-sn".into(),
+                                "-dn".into(),
+                                "-map_metadata".into(),
+                                "-1".into(),
+                                "-c:a".into(),
+                                "copy".into(),
+                                "-f".into(),
+                                format.into(),
+                                "-n".into(),
+                                output.as_os_str().into(),
+                            ],
+                            Duration::from_secs(4 * 3600),
+                        )
+                        .await?;
+                }
+                _ => unreachable!(),
+            }
+            let info = inspect(tools, &output).await?;
+            if info.video
+                || info.audio_streams != 1
+                || info.channels != source.channels
+                || info.codec != source.codec
+                || !info.start.is_finite()
+                || info.start.abs() > 0.05
+                || (info.duration - source.duration).abs() > 1.0
+                || output.metadata()?.len() > 2_200_000_000
+            {
+                return Err(AppError::input("Direct extraction needs audio conversion."));
+            }
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&output)?
+                .sync_all()?;
+            Ok(info)
+        }
+        .await;
+        match result {
+            Ok(info) => {
+                return Ok(ImportedAudio {
+                    filename,
+                    info,
+                    plan,
+                })
+            }
+            Err(_) => {
+                if output.exists() {
+                    tokio::fs::remove_file(&output).await?;
+                }
+            }
+        }
+    }
+    phase(Stage::Converting)?;
+    let filename = "prepared.m4a".to_owned();
+    let info = prepare(tools, input, &directory.join(&filename)).await?;
+    Ok(ImportedAudio {
+        filename,
+        info,
+        plan: ImportPlan::Convert,
     })
 }
 

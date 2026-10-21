@@ -106,7 +106,7 @@ impl MeetingStore {
             CREATE INDEX IF NOT EXISTS meetings_retained ON meetings(added_at DESC,id DESC,json_extract(document,'$.attempt.stage')) WHERE json_extract(document,'$.audio') IS NOT NULL;")?;
         db.execute("DELETE FROM audio_leases", [])?;
         let recoveries = {
-            let mut statement = db.prepare("SELECT document FROM meetings WHERE json_extract(document,'$.attempt.stage') IN ('submitting','preparing','briefing','importing')")?;
+            let mut statement = db.prepare("SELECT document FROM meetings WHERE json_extract(document,'$.attempt.stage') IN ('submitting','preparing','briefing','importing','extracting','converting')")?;
             let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
             rows.map(|row| Ok(serde_json::from_str::<Meeting>(&row?)?))
                 .collect::<Result<Vec<_>>>()?
@@ -120,7 +120,7 @@ impl MeetingStore {
                 }
                 m.revision += 1;
                 write(&db, &m)?;
-                if old_stage == Stage::Importing {
+                if old_stage.importing() {
                     let _ = std::fs::remove_dir_all(root.join("audio").join(&m.id));
                 }
             }
@@ -193,7 +193,7 @@ impl MeetingStore {
     }
     pub fn update_busy(&self) -> Result<bool> {
         self.call(|db| Ok(db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM audio_leases) OR EXISTS(SELECT 1 FROM meetings WHERE json_extract(document,'$.attempt.stage') IN ('importing','queued','preparing','submitting','polling','briefing'))",
+            "SELECT EXISTS(SELECT 1 FROM audio_leases) OR EXISTS(SELECT 1 FROM meetings WHERE json_extract(document,'$.attempt.stage') IN ('importing','extracting','converting','queued','preparing','submitting','polling','briefing'))",
             [], |r| r.get(0))?))
     }
     pub fn recoverable(&self, id: &str) -> Result<bool> {
@@ -257,7 +257,7 @@ impl MeetingStore {
         self.call(move |db| {
             let tx=db.transaction()?;
             let mut m=read(&tx,&id)?;
-            if m.attempt.id != attempt || m.attempt.stage != Stage::Importing { return Err(AppError::input("This import is no longer active.")); }
+            if m.attempt.id != attempt || !m.attempt.stage.importing() { return Err(AppError::input("This import is no longer active.")); }
             let duplicate:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM meetings WHERE id<>?1 AND json_extract(document,'$.audio_hash')=?2)",params![id,hash],|r|r.get(0))?;
             if duplicate { return Err(AppError::input("This audio is already in Meetings. Open the existing meeting to review or re-transcribe it.")); }
             m.duration=Some(duration); m.audio=Some(audio); m.audio_hash=Some(hash); m.attempt.stage=Stage::Queued; m.attempt.error=None; m.revision+=1;
@@ -450,7 +450,7 @@ impl MeetingStore {
                     "This meeting changed. Refresh before deleting.",
                 ));
             }
-            if m.attempt.stage == Stage::Importing {
+            if m.attempt.stage.importing() {
                 return Err(AppError::input(
                     "Wait for audio preparation to finish before deleting this meeting.",
                 ));

@@ -180,3 +180,216 @@ async fn compact_capture_assets_preserve_sources_and_recovery_inputs() {
 async fn two_hour_capture_archive_preserves_the_complete_timeline() {
     check_capture_archive(7200).await;
 }
+
+#[tokio::test]
+async fn compatible_import_copies_packets_and_pcm_without_encoding() {
+    use x_talk::meetings::media::{import_audio, ImportPlan};
+    let dir = tempfile::tempdir().unwrap();
+    let input =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/meeting-two-tracks.mkv");
+    let mut phases = Vec::new();
+    let result = import_audio(&tools(), &input, dir.path(), |stage| {
+        phases.push(stage);
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(result.plan, ImportPlan::Extract("m4a", "ipod"));
+    assert_eq!(result.info.audio_streams, 1);
+    assert!(!result.info.video);
+    async fn packets(path: &Path) -> Vec<u8> {
+        tools()
+            .run(
+                &tools().ffprobe,
+                &[
+                    "-v".into(),
+                    "error".into(),
+                    "-select_streams".into(),
+                    "a:0".into(),
+                    "-show_packets".into(),
+                    "-show_data_hash".into(),
+                    "sha256".into(),
+                    "-show_entries".into(),
+                    "packet=data_hash".into(),
+                    "-of".into(),
+                    "json".into(),
+                    path.as_os_str().into(),
+                ],
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .unwrap()
+    }
+    assert_eq!(
+        packets(&input).await,
+        packets(&dir.path().join(&result.filename)).await,
+        "Encoded audio packets changed"
+    );
+    assert_eq!(phases, vec![x_talk::meetings::domain::Stage::Extracting]);
+    let wav = dir.path().join("source.wav");
+    sparse_wav(&wav, 10);
+    let result = import_audio(&tools(), &wav, dir.path(), |_| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(result.plan, ImportPlan::Copy("wav"));
+    assert_eq!(
+        std::fs::read(&wav).unwrap(),
+        std::fs::read(dir.path().join(result.filename)).unwrap()
+    );
+}
+#[test]
+fn fast_import_requires_supported_codec_timing_and_upload_size() {
+    use x_talk::meetings::media::{import_plan, ImportPlan, Inspection};
+    let mut info = Inspection {
+        duration: 100.0,
+        audio_streams: 1,
+        video: true,
+        channels: 2,
+        codec: "aac".into(),
+        format: "mov,mp4,m4a,3gp,3g2,mj2".into(),
+        start: 0.0,
+        streams: 2,
+    };
+    assert_eq!(
+        import_plan(&info, 3_000_000_000),
+        ImportPlan::Extract("m4a", "ipod"),
+        "Large video size is not audio upload size"
+    );
+    info.start = 1.5;
+    assert_eq!(import_plan(&info, 1000), ImportPlan::Convert);
+    info.start = 0.0;
+    info.codec = "unsupported".into();
+    assert_eq!(import_plan(&info, 1000), ImportPlan::Convert);
+    info.video = false;
+    info.streams = 1;
+    info.format = "wav".into();
+    info.codec = "pcm_alaw".into();
+    assert_eq!(
+        import_plan(&info, 1000),
+        ImportPlan::Convert,
+        "Do not bypass the bundled playback codec support"
+    );
+    for (format, codec, ext) in [
+        ("mp3", "mp3", "mp3"),
+        ("flac", "flac", "flac"),
+        ("ogg", "opus", "ogg"),
+        ("ogg", "vorbis", "ogg"),
+        ("aac", "aac", "aac"),
+        ("wav", "pcm_s16le", "wav"),
+    ] {
+        info.format = format.into();
+        info.codec = codec.into();
+        assert_eq!(import_plan(&info, 1000), ImportPlan::Copy(ext));
+        assert_eq!(import_plan(&info, 2_200_000_001), ImportPlan::Convert);
+    }
+}
+#[tokio::test]
+async fn offset_audio_falls_back_to_conversion() {
+    use x_talk::meetings::media::{import_audio, ImportPlan};
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("source.wav");
+    sparse_wav(&wav, 5);
+    let delayed = dir.path().join("offset.m4a");
+    tools()
+        .run(
+            &tools().ffmpeg,
+            &[
+                "-v".into(),
+                "error".into(),
+                "-itsoffset".into(),
+                "1".into(),
+                "-i".into(),
+                wav.as_os_str().into(),
+                "-c:a".into(),
+                "aac".into(),
+                delayed.as_os_str().into(),
+            ],
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+    let input = inspect(&tools(), &delayed).await.unwrap();
+    assert!(input.start > 0.5);
+    let result = import_audio(&tools(), &delayed, dir.path(), |_| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(result.plan, ImportPlan::Convert);
+    assert!((result.info.duration - input.duration).abs() < 0.1);
+    assert!(result.info.start.abs() < 0.05);
+    assert!(!dir.path().join("extracted.m4a").exists());
+}
+
+#[tokio::test]
+#[ignore = "local one-hour synthetic audio import benchmark; no providers"]
+async fn benchmark_one_hour_audio_import() {
+    use x_talk::meetings::media::{import_audio, ImportPlan};
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("hour.wav");
+    sparse_wav(&wav, 3600);
+    let source = dir.path().join("hour.m4a");
+    prepare(&tools(), &wav, &source).await.unwrap();
+    let started = std::time::Instant::now();
+    let fast = import_audio(&tools(), &source, dir.path(), |_| Ok(()))
+        .await
+        .unwrap();
+    let fast_elapsed = started.elapsed();
+    assert_eq!(fast.plan, ImportPlan::Extract("m4a", "ipod"));
+    let started = std::time::Instant::now();
+    let normalized = prepare(&tools(), &source, &dir.path().join("normalized.m4a"))
+        .await
+        .unwrap();
+    assert!((fast.info.duration - normalized.duration).abs() < 0.1);
+    println!("One-hour synthetic AAC track: direct extraction {:?}; prior conversion {:?}; input {} bytes; audio {} bytes",fast_elapsed,started.elapsed(),source.metadata().unwrap().len(),dir.path().join(fast.filename).metadata().unwrap().len());
+}
+
+// Uses the pinned Windows FFmpeg 8 build; older system FFmpeg loops this fixture differently.
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "local one-hour synthetic import benchmark; no providers"]
+async fn benchmark_one_hour_video_import() {
+    use x_talk::meetings::media::{import_audio, ImportPlan};
+    let dir = tempfile::tempdir().unwrap();
+    let input =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/meeting-two-tracks.mkv");
+    let source = dir.path().join("hour.mp4");
+    tools()
+        .run(
+            &tools().ffmpeg,
+            &[
+                "-v".into(),
+                "error".into(),
+                "-stream_loop".into(),
+                "-1".into(),
+                "-i".into(),
+                input.as_os_str().into(),
+                "-map".into(),
+                "0:v:0".into(),
+                "-map".into(),
+                "0:a:0".into(),
+                "-c".into(),
+                "copy".into(),
+                "-t".into(),
+                "3600".into(),
+                "-avoid_negative_ts".into(),
+                "make_zero".into(),
+                "-f".into(),
+                "ipod".into(),
+                source.as_os_str().into(),
+            ],
+            std::time::Duration::from_secs(120),
+        )
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    let fast = import_audio(&tools(), &source, dir.path(), |_| Ok(()))
+        .await
+        .unwrap();
+    let fast_elapsed = started.elapsed();
+    assert_eq!(fast.plan, ImportPlan::Extract("m4a", "ipod"));
+    let started = std::time::Instant::now();
+    let normalized = prepare(&tools(), &source, &dir.path().join("normalized.m4a"))
+        .await
+        .unwrap();
+    assert!((fast.info.duration - normalized.duration).abs() < 1.0);
+    println!("One-hour synthetic video: direct extraction {:?}; prior conversion {:?}; input {} bytes; audio {} bytes",fast_elapsed,started.elapsed(),source.metadata().unwrap().len(),dir.path().join(fast.filename).metadata().unwrap().len());
+}

@@ -9,14 +9,14 @@
  import AudioPlayer from '../AudioPlayer.svelte';
  import type {Playback} from '../../types';
  let {record,playback,refreshPlayback,recording=false}:{record:()=>void;playback:Playback|null;refreshPlayback:()=>Promise<void>;recording?:boolean}=$props();
- const processing=(stage:string)=>['importing','queued','preparing','submitting','polling','briefing'].includes(stage);
+ const processing=(stage:string)=>['importing','extracting','converting','queued','preparing','submitting','polling','briefing'].includes(stage);
  let importing=$state(false);
  import Icon from '../Icon.svelte';
  let rows=$state<Summary[]>([]), selected=$state<View|null>(null);
- let search=$state(''), filter=$state(''), speakerFilter=$state(''), original=$state(false);
+ let search=$state(''), filter=$state(''), speakerFilter=$state('');
  let tab=$state('brief'), busy=$state(false);
  let title=$state(''), callAt=$state('');
- let editTurn=$state(''), editText=$state(''), editSpeaker=$state('');
+ let editTurn=$state(''), editText=$state(''), editSpeaker=$state(''), editName=$state('');
  let mergeFrom=$state(''), mergeInto=$state('');
  let confirmation=$state<'delete'|'retry'|'merge'|null>(null);
  let dialog=$state<HTMLDialogElement>();
@@ -25,7 +25,7 @@
  const transcript=$derived(current?.transcript);
  const brief=$derived(current?.brief.content);
  const filtered=$derived(rows.filter(m=>`${m.title} ${m.preview??''}`.toLowerCase().includes(search.toLowerCase())));
- const turns=$derived((transcript?.turns??[]).filter(t=>(!speakerFilter||t.speaker_id===speakerFilter)&&(original?t.original_text:t.text).toLowerCase().includes(filter.toLowerCase())));
+ const turns=$derived((transcript?.turns??[]).filter(t=>(!speakerFilter||t.speaker_id===speakerFilter)&&t.text.toLowerCase().includes(filter.toLowerCase())));
  const editingBlocked=$derived(!!selected?.replacement&&!['failed','complete'].includes(current?.transcription_status??''));
  const canRetry=$derived(!!current&&['complete','failed','submission_unknown','recovered','waiting_for_keys'].includes(current.transcription_status));
  $effect(()=>{if(confirmation&&dialog&&!dialog.open)dialog.showModal();});
@@ -47,7 +47,7 @@
  onMount(()=>{
   void load();
   const subscription=listen('meetings-changed',load);
-  let polling=false;const timer=setInterval(async()=>{if(polling||!rows.some(row=>['importing','queued','preparing','submitting','polling','briefing'].includes(row.status)))return;polling=true;try{await load();}finally{polling=false;}},1500);
+  let polling=false;const timer=setInterval(async()=>{if(polling||!rows.some(row=>['importing','extracting','converting','queued','preparing','submitting','polling','briefing'].includes(row.status)))return;polling=true;try{await load();}finally{polling=false;}},1500);
   return()=>{clearInterval(timer);readVersion++;void subscription.then(f=>f());};
  });
 </script>
@@ -59,10 +59,10 @@
   <div class="table-toolbar"><label class="search-field"><Icon name="search" size={17}/><input aria-label="Search meetings" placeholder="Search titles and briefs…" bind:value={search}/></label></div>
   <div class="meeting-library">
    {#each filtered as row (row.id)}<article class="meeting-card">
-    <div class="meeting-card-heading"><span class="badge">{#if processing(row.status)}<Activity/>{/if}{stageLabel(row.status)}</span><button class="subtle-button" disabled={busy||['importing','queued','preparing','submitting','polling'].includes(row.status)} onclick={()=>run(()=>meetings.copy(row.id),'Meeting JSON copied')}><Icon name="copy" size={15}/>Copy meeting JSON</button></div>
+    <div class="meeting-card-heading"><span class="badge">{#if processing(row.status)}<Activity/>{/if}{stageLabel(row.status)}</span><button class="subtle-button" disabled={busy||['importing','extracting','converting','queued','preparing','submitting','polling'].includes(row.status)} onclick={()=>run(()=>meetings.copy(row.id),'Meeting JSON copied')}><Icon name="copy" size={15}/>Copy meeting JSON</button></div>
     <h2><button class="meeting-title" onclick={()=>open(row.id)}>{row.title}</button></h2>
     <div class="meeting-preview"><button class="text-preview" onclick={()=>open(row.id)}>{row.preview??(row.status==='failed'?'Processing needs attention. Open this recording for details.':'Your transcript and meeting brief will appear here when processing finishes.')}</button></div>
-    <p class="recording-meta">{duration(row.duration??0)} · {row.speakers?`${row.speakers} speakers`:'Speakers pending'}{#if !row.audio_available&&!['importing','queued'].includes(row.status)} · Audio not retained{/if}</p>
+    <p class="recording-meta">{duration(row.duration??0)} · {row.speakers?`${row.speakers} speakers`:'Speakers pending'}{#if !row.audio_available&&!['importing','extracting','converting','queued'].includes(row.status)} · Audio not retained{/if}</p>
     <div class="card-bottom"><span>{new Date(row.call_at).toLocaleDateString()}</span><button class="subtle-button" onclick={()=>open(row.id)}>Open recording <span aria-hidden="true">↗</span></button></div>
    </article>
    {:else}<div class="empty"><Icon name="heart" size={32}/><h2>{search?'No meetings found':'Every conversation has a next step'}</h2><p>{search?'Try another search.':'Import an audio or video recording to create a transcript and meeting brief.'}</p></div>{/each}
@@ -74,8 +74,11 @@
   {#if current.capture_warning}<p class="banner" role="status">{current.capture_warning}</p>{/if}
   {#if selected?.error}<div class="banner error" role="alert">{selected.error}</div>{/if}
   {#if current.transcription_status==='submission_unknown'}<p class="banner">The provider may have accepted the previous request. Review its dashboard before retrying; another request may incur another charge.</p>{/if}
+  <div class="meeting-review-toolbar">
+   <div class="meeting-audio"><AudioPlayer entry={{id:`meeting:${current.id}`,title:current.title,audio:current.audio_available?current.id:null,duration:current.duration_seconds??0}} {playback} disabled={busy||recording} {run} play={(_id,start,paused)=>meetings.play(current!.id,start,paused)}/></div>
   <div class="meeting-tabs" role="tablist" aria-label="Meeting review">
    {#each [['brief','Meeting brief'],['transcript','Transcript'],['speakers','Manage speakers'],['details','Details']] as [key,label]}<button role="tab" aria-selected={tab===key} class:chosen={tab===key} onclick={()=>tab=key}>{label}</button>{/each}
+  </div>
   </div>
   <section class="meeting-panel">
   {#if tab==='brief'}
@@ -90,12 +93,12 @@
     <h3>Suggested follow-up questions</h3>{#each brief.suggested_follow_ups as question}<p>{question}</p>{:else}<p class="muted">None suggested.</p>{/each}
    {:else}<div class="empty">{#if processing(current.transcription_status)}<Activity size={30}/>{:else}<Icon name="spark" size={30}/>{/if}<h2>{current.brief.status==='failed'?'Brief needs attention':'Your brief is on its way'}</h2><p>{current.brief.error??'The transcript is saved independently. You can review and copy it as soon as it is ready.'}</p></div>{/if}
   {:else if tab==='transcript'}
-   <div class="table-toolbar"><label class="search-field"><Icon name="search" size={16}/><input bind:value={filter} placeholder="Find in transcript…" aria-label="Search transcript"/></label><select bind:value={speakerFilter} aria-label="Filter speaker"><option value="">All speakers</option>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select><label class="check"><input type="checkbox" bind:checked={original}/>Original text</label></div>
+   <div class="table-toolbar"><label class="search-field"><Icon name="search" size={16}/><input bind:value={filter} placeholder="Find in transcript…" aria-label="Search transcript"/></label><select bind:value={speakerFilter} aria-label="Filter speaker"><option value="">All speakers</option>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></div>
    <p class="help">Copy meeting JSON always includes the complete corrected transcript, original evidence, and brief, regardless of these filters.</p>
    {#each turns as turn (turn.id)}<article class="meeting-turn" id={`turn-${turn.id}`} style:border-left={`3px solid ${speakerColor(turn.speaker_id)}`}>
-    <div class="meeting-card-heading"><strong>{name(original?turn.original_speaker_id:turn.speaker_id)}</strong><button class="subtle-button" disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.play(current!.id,turn.start))}>{duration(turn.start)}–{duration(turn.end)} · Play</button></div>
-    {#if editTurn===turn.id}<label>Speaker<select bind:value={editSpeaker}>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></label><label>Turn text<textarea rows="4" bind:value={editText}></textarea></label><div class="actions"><button onclick={()=>editTurn=''}>Cancel</button><button disabled={busy||editingBlocked} onclick={async()=>{if(await edit({kind:'correct',turn:turn.id,correction:{text:editText,speaker:editSpeaker}}))editTurn='';}}>Save turn</button></div>
-    {:else}<p class="turn-text">{original?turn.original_text:turn.text}</p><div class="actions"><button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>{editTurn=turn.id;editText=turn.text;editSpeaker=turn.speaker_id;}}>Edit turn</button>{#if turn.correction.text!==null||turn.correction.speaker!==null}<button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>edit({kind:'correct',turn:turn.id,correction:null})}>Restore original turn</button>{/if}</div>{/if}
+    <div class="meeting-card-heading"><strong>{name(turn.speaker_id)}</strong><button class="subtle-button" disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.play(current!.id,turn.start))}>{duration(turn.start)}–{duration(turn.end)} · Play</button></div>
+    {#if editTurn===turn.id}<div class="turn-speaker-fields"><label>Speaker<select aria-label="Turn speaker" bind:value={editSpeaker} onchange={e=>{editSpeaker=e.currentTarget.value;editName=name(editSpeaker);}}>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></label><label>Speaker name<input aria-label="Turn speaker name" bind:value={editName} maxlength="200" required/></label></div><p class="help rename-help">Renaming updates this speaker throughout the meeting.</p><label>Turn text<textarea rows="4" bind:value={editText}></textarea></label><div class="actions"><button onclick={()=>editTurn=''}>Cancel</button><button disabled={busy||editingBlocked} onclick={async()=>{if(await edit({kind:'correct',turn:turn.id,correction:{text:editText,speaker:editSpeaker},speaker_name:editName!==name(editSpeaker)?editName:undefined}))editTurn='';}}>Save turn</button></div>
+    {:else}<p class="turn-text">{turn.text}</p><div class="actions"><button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>{editTurn=turn.id;editText=turn.text;editSpeaker=turn.speaker_id;editName=name(turn.speaker_id);}}>Edit turn</button>{#if turn.correction.text!==null||turn.correction.speaker!==null}<button class="subtle-button" disabled={busy||editingBlocked} onclick={()=>edit({kind:'correct',turn:turn.id,correction:null})}>Restore original turn</button>{/if}</div>{/if}
    </article>{:else}<p class="empty">{transcript?'No turns match these filters.':'The transcript will appear here after processing.'}</p>{/each}
   {:else if tab==='speakers'}
    <h2>The people in this conversation</h2><p class="help speaker-intro">Estimated time measures diarized turn coverage, including pauses. Speakers may overlap.</p>
@@ -104,7 +107,7 @@
   {:else}
    <h2>Meeting details</h2><form onsubmit={e=>{e.preventDefault();void edit({kind:'metadata',title,call_at:callAt});}}><label>Title<input bind:value={title} maxlength="500" required/></label><label>Meeting date<input bind:value={callAt} required/></label><button disabled={busy}>Save details</button></form>
    <dl><dt>Source</dt><dd>{current.source}{current.filename?` · ${current.filename}`:''}</dd><dt>Audio</dt><dd>{current.audio_available?'Retained':'No longer retained; transcript and brief remain available'}</dd><dt>Transcription</dt><dd>{transcript?`${transcript.provider} · ${transcript.model??'Model not reported'}`:'Pending'}</dd><dt>Brief</dt><dd>{current.brief.provider} · {current.brief.actual_model??current.brief.model}</dd></dl>
-   <div class="meeting-audio"><AudioPlayer entry={{id:`meeting:${current.id}`,title:current.title,audio:current.audio_available?current.id:null,duration:current.duration_seconds??0}} {playback} disabled={busy||recording} {run} play={(_id,start,paused)=>meetings.play(current!.id,start,paused)}/></div><div class="actions"><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.download(current!.id),'Audio saved')}><Icon name="download" size={16}/>Download audio</button><button disabled={busy||!current.audio_available||!canRetry} onclick={()=>confirmation='retry'}>Re-transcribe</button><button class="danger" disabled={busy||current.transcription_status==='importing'} onclick={()=>confirmation='delete'}>Delete meeting</button></div>
+   <div class="actions"><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.download(current!.id),'Audio saved')}><Icon name="download" size={16}/>Download audio</button><button disabled={busy||!current.audio_available||!canRetry} onclick={()=>confirmation='retry'}>Re-transcribe</button><button class="danger" disabled={busy||['importing','extracting','converting'].includes(current.transcription_status)} onclick={()=>confirmation='delete'}>Delete meeting</button></div>
   {/if}
   </section>
  {/if}
@@ -120,9 +123,10 @@
  .meeting-card{min-width:0;display:flex;flex-direction:column;min-height:300px}.meeting-card h2{margin:20px 0 8px}.meeting-preview{flex:1;margin:8px 0 20px}.card-bottom{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--line);padding-top:16px;font-size:12px;color:var(--muted)}.meeting-preview .text-preview{flex:1;line-height:1.65}
  .meeting-tabs{display:flex;gap:8px;margin:20px 0;flex-wrap:wrap}.meeting-tabs button{border-radius:20px}.meeting-tabs .chosen{background:var(--accent-soft);font-weight:600}
  .meeting-summary{font-size:17px;line-height:1.8}.brief-item{padding:8px 0 12px;border-bottom:1px solid var(--line)}.brief-item p{margin:8px 0}
- .evidence-links{display:flex;gap:8px}.meeting-turn{padding:22px 16px;border-bottom:1px solid var(--line);scroll-margin:24px}
+ .evidence-links{display:flex;gap:8px}.meeting-turn{scroll-margin-top:180px;padding:22px 16px;border-bottom:1px solid var(--line)}
  .turn-text{white-space:pre-wrap;line-height:1.7}.meeting-panel h3{margin-top:28px}
  .speaker-intro{margin:12px 0 24px;line-height:1.8}.speaker-row{padding:16px 0 22px;border-bottom:1px solid var(--line)}.speaker-name{display:flex;align-items:end;gap:12px;margin-bottom:14px}.speaker-name label{width:220px;max-width:65%;margin:0!important}.speaker-row small{display:block;font-size:12px}.back-to-meetings{margin-bottom:28px}.meeting-status{display:inline-flex;margin-bottom:12px}.meeting-audio{max-width:480px;margin:24px 0}
+ .meeting-panel .search-field{display:flex;flex-direction:row;align-items:center;margin:0;gap:9px}.meeting-panel .search-field input{flex:1;min-width:0}.meeting-panel .table-toolbar>select{width:auto;min-width:150px}.turn-speaker-fields{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.turn-speaker-fields label{width:220px;max-width:100%}.rename-help{margin:4px 0 18px}.meeting-review-toolbar{position:sticky;top:-1px;z-index:5;background:var(--bg);padding:12px 0 1px;border-bottom:1px solid var(--line);margin-bottom:20px}.meeting-review-toolbar .meeting-audio{margin:0 0 12px;max-width:480px}.meeting-review-toolbar .meeting-tabs{margin:0 0 12px}
  .meeting-panel label{display:block;margin:12px 0}.meeting-panel input,.meeting-panel textarea{width:100%}.meeting-panel select{max-width:250px}
  .meeting-panel dl{display:grid;grid-template-columns:120px 1fr;gap:16px;margin:28px 0}.meeting-panel dd{margin:0}
  @media(max-width:700px){.meetings-page{padding:20px}.page-heading,.meeting-preview,.speaker-row{flex-direction:column;align-items:stretch}.meeting-card-heading{align-items:flex-start}.meeting-panel{padding:18px}}

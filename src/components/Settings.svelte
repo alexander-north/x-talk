@@ -63,7 +63,7 @@
  async function test(){if(!draft)return;testing=true;testOutput='';testElapsed=null;const started=performance.now();await task(async()=>{testOutput=await api.test(copy(draft!),testInput);testElapsed=performance.now()-started;},'Test complete');testing=false;}
 </script>
 <main class="settings">
- <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>Settings</h1></div></div>
+ <div class="page-heading"><div><p class="eyebrow">Xtalk {snapshot.diagnostics.version} · {snapshot.diagnostics.commit}</p><h1>Settings</h1></div></div>
  <nav class="settings-tabs" aria-label="Settings sections">{#each settingsSections as name}<button class:chosen={section===name} onclick={()=>openSection(name)}>{name}</button>{/each}</nav>
  <section class="settings-content" aria-label={section}><h2 class="settings-section-title">{section}</h2>
 

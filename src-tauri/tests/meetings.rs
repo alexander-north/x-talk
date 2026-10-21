@@ -575,31 +575,33 @@ fn generated_citations_map_to_stable_ids_and_reject_invalid_references() {
 
 #[test]
 fn imports_are_visible_before_audio_and_recover_without_provider_work() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = MeetingStore::open(dir.path()).unwrap();
-    let mut m = Meeting::new("Chosen title".into(), SourceKind::Video, None);
-    m.attempt.stage = Stage::Importing;
-    m.manual_title = true;
-    m.call_at = "2026-10-01T12:00:00Z".into();
-    store.insert(m.clone()).unwrap();
-    assert_eq!(store.summaries().unwrap()[0].status, Stage::Importing);
-    assert!(store.pending().unwrap().is_empty());
-    assert!(store.update_busy().unwrap());
-    assert!(store.delete(&m.id, m.revision).is_err());
-    let path = dir.path().join("audio").join(&m.id);
-    std::fs::create_dir_all(&path).unwrap();
-    std::fs::write(path.join("partial"), b"unfinished").unwrap();
-    drop(store);
-    let store = MeetingStore::open(dir.path()).unwrap();
-    let recovered = store.get(&m.id).unwrap();
-    assert_eq!(recovered.attempt.stage, Stage::Failed);
-    assert!(recovered.attempt.error.unwrap().contains("interrupted"));
-    assert!(!path.exists());
-    assert!(store.pending().unwrap().is_empty());
-    assert_eq!(
-        store.summaries().unwrap()[0].call_at,
-        "2026-10-01T12:00:00Z"
-    );
+    for stage in [Stage::Importing, Stage::Extracting, Stage::Converting] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open(dir.path()).unwrap();
+        let mut m = Meeting::new("Chosen title".into(), SourceKind::Video, None);
+        m.attempt.stage = stage.clone();
+        m.manual_title = true;
+        m.call_at = "2026-10-01T12:00:00Z".into();
+        store.insert(m.clone()).unwrap();
+        assert_eq!(store.summaries().unwrap()[0].status, stage);
+        assert!(store.pending().unwrap().is_empty());
+        assert!(store.update_busy().unwrap());
+        assert!(store.delete(&m.id, m.revision).is_err());
+        let path = dir.path().join("audio").join(&m.id);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("partial"), b"unfinished").unwrap();
+        drop(store);
+        let store = MeetingStore::open(dir.path()).unwrap();
+        let recovered = store.get(&m.id).unwrap();
+        assert_eq!(recovered.attempt.stage, Stage::Failed);
+        assert!(recovered.attempt.error.unwrap().contains("interrupted"));
+        assert!(!path.exists());
+        assert!(store.pending().unwrap().is_empty());
+        assert_eq!(
+            store.summaries().unwrap()[0].call_at,
+            "2026-10-01T12:00:00Z"
+        );
+    }
 }
 
 #[test]

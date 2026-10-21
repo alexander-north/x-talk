@@ -199,30 +199,40 @@ async fn prepare_import(app: tauri::AppHandle, pending: PendingImport, m: Meetin
             ));
         }
         tokio::fs::create_dir_all(&directory).await?;
-        let prepared = directory.join("prepared.m4a");
-        let info = media::prepare(&s.media, &pending.path, &prepared).await?;
+        let imported = media::import_audio(&s.media, &pending.path, &directory, |stage| {
+            s.meetings.publish(&m.id, &m.attempt.id, |record| {
+                record.attempt.stage = stage;
+                Ok(())
+            })?;
+            changed(&app);
+            Ok(())
+        })
+        .await?;
+        let prepared = directory.join(&imported.filename);
+        let info = imported.info;
         let hash = media::content_hash(&prepared).await?;
-        let mut assets = vec!["prepared.m4a".to_owned()];
-        let download = if pending.inspection.video {
-            "prepared.m4a".into()
-        } else {
-            let ext = pending
-                .path
-                .extension()
-                .and_then(|s| s.to_str())
-                .filter(|s| s.chars().all(|c| c.is_ascii_alphanumeric()))
-                .unwrap_or("audio");
-            let name = format!("original.{ext}");
-            tokio::fs::copy(&pending.path, directory.join(&name)).await?;
-            tokio::fs::OpenOptions::new()
-                .write(true)
-                .open(directory.join(&name))
-                .await?
-                .sync_all()
-                .await?;
-            assets.push(name.clone());
-            name
-        };
+        let mut assets = vec![imported.filename.clone()];
+        let download =
+            if pending.inspection.video || matches!(imported.plan, media::ImportPlan::Copy(_)) {
+                imported.filename.clone()
+            } else {
+                let ext = pending
+                    .path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .filter(|s| s.chars().all(|c| c.is_ascii_alphanumeric()))
+                    .unwrap_or("audio");
+                let name = format!("original.{ext}");
+                tokio::fs::copy(&pending.path, directory.join(&name)).await?;
+                tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .open(directory.join(&name))
+                    .await?
+                    .sync_all()
+                    .await?;
+                assets.push(name.clone());
+                name
+            };
         let store = s.meetings.clone();
         let id = m.id.clone();
         let attempt = m.attempt.id.clone();
@@ -232,7 +242,7 @@ async fn prepare_import(app: tauri::AppHandle, pending: PendingImport, m: Meetin
                 &attempt,
                 Audio {
                     download,
-                    prepared: Some("prepared.m4a".into()),
+                    prepared: Some(imported.filename),
                     assets,
                 },
                 hash,
@@ -264,6 +274,7 @@ pub enum Edit {
     Correct {
         turn: String,
         correction: Option<Correction>,
+        speaker_name: Option<String>,
     },
     Name {
         speaker: String,
@@ -303,7 +314,22 @@ pub async fn meeting_edit(
                         m.manual_title = true;
                         m.call_at = call_at;
                     }
-                    Edit::Correct { turn, correction } => m.correct(&turn, correction)?,
+                    Edit::Correct {
+                        turn,
+                        correction,
+                        speaker_name,
+                    } => {
+                        let speaker = correction.as_ref().and_then(|c| c.speaker.clone());
+                        m.correct(&turn, correction)?;
+                        if let Some(name) = speaker_name {
+                            m.name_speaker(
+                                &speaker.ok_or_else(|| {
+                                    AppError::input("Choose a speaker to rename.")
+                                })?,
+                                &name,
+                            )?;
+                        }
+                    }
                     Edit::Name { speaker, name } => m.name_speaker(&speaker, &name)?,
                     Edit::Merge { from, into } => m.merge(&from, &into)?,
                     Edit::UndoMerge => m.undo_merge()?,

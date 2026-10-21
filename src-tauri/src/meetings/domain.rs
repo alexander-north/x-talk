@@ -89,6 +89,8 @@ pub enum Stage {
     #[default]
     Queued,
     Importing,
+    Extracting,
+    Converting,
     Preparing,
     WaitingForKeys,
     Submitting,
@@ -143,6 +145,11 @@ pub struct Attempt {
     pub error: Option<String>,
     pub replacement: bool,
 }
+impl Stage {
+    pub fn importing(&self) -> bool {
+        matches!(self, Self::Importing | Self::Extracting | Self::Converting)
+    }
+}
 impl Attempt {
     pub fn queued(replacement: bool) -> Self {
         Self {
@@ -157,11 +164,11 @@ impl Attempt {
         !matches!(self.stage, Stage::Complete)
     }
     pub fn recovery(&mut self) {
-        if self.stage == Stage::Importing {
+        if self.stage.importing() {
             self.error = Some("Audio import was interrupted. Import the original file again; no transcription was submitted.".into());
         }
         self.stage = match self.stage {
-            Stage::Importing => Stage::Failed,
+            Stage::Importing | Stage::Extracting | Stage::Converting => Stage::Failed,
             Stage::Submitting => Stage::SubmissionUnknown,
             Stage::Preparing => Stage::Queued,
             // A brief POST may have reached the provider before the process died.
