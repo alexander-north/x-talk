@@ -636,6 +636,29 @@ pub async fn meeting_start(app: tauri::AppHandle, options: super::capture::Optio
     }
 }
 #[tauri::command]
+pub async fn meeting_change_device(
+    app: tauri::AppHandle,
+    microphone: bool,
+    device: Option<String>,
+) -> Result<()> {
+    let state = app.state::<AppState>();
+    let _control = state.controls.lock().await;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let capture = state
+            .meeting_capture
+            .lock()
+            .map_err(|_| AppError::input("Capture unavailable."))?;
+        let session = capture
+            .as_ref()
+            .ok_or_else(|| AppError::input("No meeting is recording."))?;
+        session.change_device(microphone, device)
+    })
+    .await
+    .map_err(|_| AppError::input("Could not change the recording device."))?
+}
+#[tauri::command]
 pub fn meeting_mute(app: tauri::AppHandle, microphone: bool, muted: bool) -> Result<()> {
     let state = app.state::<AppState>();
     let capture = state

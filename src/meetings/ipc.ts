@@ -21,6 +21,7 @@ export const meetings={
  captureStatus:()=>invoke<CaptureStatus>('meeting_capture_status'),
  start:(options:CaptureOptions)=>invoke<void>('meeting_start',{options}),
  stop:(discard=false)=>invoke<string|null>('meeting_stop',{discard}),
+ changeDevice:(microphone:boolean,device:string|null)=>invoke<void>('meeting_change_device',{microphone,device}),
  mute:(microphone:boolean,muted:boolean)=>invoke<void>('meeting_mute',{microphone,muted}),
  list:()=>invoke<Summary[]>('meetings_list'),
  get:(id:string)=>invoke<View>('meeting_get',{id}),

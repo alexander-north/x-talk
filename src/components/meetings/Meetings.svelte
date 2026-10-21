@@ -9,7 +9,7 @@
  import Activity from '../Activity.svelte';
  import AudioPlayer from '../AudioPlayer.svelte';
  import type {Playback} from '../../types';
- let {playback,refreshPlayback,recording=false}:{playback:Playback|null;refreshPlayback:()=>Promise<void>;recording?:boolean}=$props();
+ let {playback,refreshPlayback,recording=false,initialId=null}:{playback:Playback|null;refreshPlayback:()=>Promise<void>;recording?:boolean;initialId?:string|null}=$props();
  const processing=(stage:string)=>['importing','extracting','converting','queued','preparing','submitting','polling','briefing'].includes(stage);
  let importing=$state(false);
  let page=$state(0),pageSize=$state(50);
@@ -48,7 +48,7 @@
  function name(id:string){return transcript?.speakers.find(s=>s.id===id)?.name??`Speaker ${id}`;}
  function supporting(id:string){tab='transcript';filter='';speakerFilter='';setTimeout(()=>document.getElementById(`turn-${id}`)?.scrollIntoView({block:'center',behavior:'smooth'}),0);}
  onMount(()=>{
-  void load();
+  if(initialId)void open(initialId);else void load();
   const subscription=listen('meetings-changed',load);
   let polling=false;const timer=setInterval(async()=>{if(polling||!rows.some(row=>['importing','extracting','converting','queued','preparing','submitting','polling','briefing'].includes(row.status)))return;polling=true;try{await load();}finally{polling=false;}},1500);
   return()=>{clearInterval(timer);readVersion++;void subscription.then(f=>f());};

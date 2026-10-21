@@ -5,9 +5,9 @@ function star(c:CanvasRenderingContext2D,x:number,y:number,r:number){
  c.beginPath();c.moveTo(x,y-r);c.quadraticCurveTo(x+r*.15,y-r*.15,x+r,y);c.quadraticCurveTo(x+r*.15,y+r*.15,x,y+r);c.quadraticCurveTo(x-r*.15,y+r*.15,x-r,y);c.quadraticCurveTo(x-r*.15,y-r*.15,x,y-r);c.fill();
 }
 /** A single bounded canvas keeps the glass, spectral halo and particles in one composited layer. */
-export function paintOrb(c:CanvasRenderingContext2D,phase:OrbPhase,t:number,bands:number[],reduced:boolean,shapeMix=phase==='transforming'?1:0,meeting=false){
+export function paintOrb(c:CanvasRenderingContext2D,phase:OrbPhase,t:number,bands:number[],reduced:boolean,shapeMix=phase==='transforming'?1:0,meeting=false,previewActivity=false){
  c.clearRect(0,0,440,440);c.save();c.translate(220,220);
- const recording=phase==='recording',transcribing=phase==='transcribing'||phase==='canceling';
+ const recording=phase==='recording'||meeting&&previewActivity&&phase==='idle',transcribing=phase==='transcribing'||phase==='canceling';
  const pulse=reduced?1:1+Math.sin(t*tau/4)*.012;
  const r=108*pulse,corner=r+(35-r)*shapeMix;
  const shape=(inset=0)=>{c.beginPath();c.roundRect(-r+inset,-r+inset,(r-inset)*2,(r-inset)*2,Math.max(20,corner-inset));};
@@ -48,14 +48,15 @@ export function paintOrb(c:CanvasRenderingContext2D,phase:OrbPhase,t:number,band
    // Repeat the full frequency range in each quadrant so speech's lower
    // frequencies cannot concentrate all activity in the upper semicircle.
    const quadrant=Math.floor(i/24),position=quadrant%2===0?i%24:23-i%24;
-   const index=((position*7)%24)*2;
-   const energy=Math.max(0,Math.min(1,Math.max(bands[index]??0,bands[index+1]??0)));
+   const index=meeting?i%2:((position*7)%24)*2;
+   const energy=Math.max(0,Math.min(1,meeting?(bands[index]??0):Math.max(bands[index]??0,bands[index+1]??0)));
    const angle=i*tau/96-Math.PI/2,len=Math.min(76,4*(3+energy*35));
    // Crossfade seeded blue selections instead of flickering or moving bars.
    const cycle=t/1.2,epoch=Math.floor(cycle),blend=(1-Math.cos((cycle-epoch)*Math.PI))/2;
    const before=random(i+epoch*113)>.73?1:0,after=random(i+(epoch+1)*113)>.73?1:0;
-   const blue=before+(after-before)*blend;
+   const blue=meeting?0:before+(after-before)*blend;
    c.save();c.rotate(angle);c.fillStyle=`hsla(${19+energy*16+Math.sin(t*1.1+i*.3)*4},95%,${62+energy*16}%,${.42+energy*.55})`;
+   if(meeting)c.fillStyle=i%2===0?`rgba(211,91,170,${.42+energy*.55})`:`rgba(235,161,57,${.42+energy*.55})`;
    c.fillRect(119,-1.35,len,2.7);c.fillRect(123+len,-1,2,2);c.restore();
    if(blue>0){c.save();c.rotate(angle);c.fillStyle=`rgba(24,143,255,${blue*(.75+energy*.25)})`;c.fillRect(119,-1.35,len,2.7);c.fillRect(123+len,-1,2,2);c.restore();}
   }

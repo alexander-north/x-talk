@@ -248,4 +248,21 @@ describe('Meetings native acceptance',()=>{
   }}finally{await browser.setWindowSize(1100,800);}
  });
 
+ it('imports a meeting from the shared recorder footer and opens its detail',async()=>{
+  await $('button[aria-label="Recorder"]').click();
+  await $('.recorder-modes').$('button=Meeting').click();
+  const footer=await browser.execute(()=>{const row=document.querySelector('.recorder-bottom'),items=[...row.children].map(e=>e.getBoundingClientRect());return items.every(r=>Math.abs((r.top+r.bottom)/2-(items[0].top+items[0].bottom)/2)<2);});
+  if(!footer)throw Error('Recorder footer does not share one baseline');
+  await expect($('.monitoring-status')).not.toExist();
+  await expect($('.source-help')).not.toExist();
+  await expect($('.level-meter:has(meter[aria-label="Microphone level"])')).toHaveText(expect.stringContaining('-60 dBFS'));
+  const file=path.resolve('.tmp/recorder-import.wav'),wav=Buffer.alloc(44+32000);
+  wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(32000,40);wav.writeInt16LE(999,44);writeFileSync(file,wav);
+  await $('button=Import audio').click();await $('.drop-zone').click();
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',file],{timeout:40000});
+  await $('input[aria-label="Import meeting title"]').setValue('Recorder import');
+  await $('button=Create Transcript and Brief').click();
+  await expect($('.meetings-page.detail-view h1')).toHaveText('Recorder import');
+ });
+
 });

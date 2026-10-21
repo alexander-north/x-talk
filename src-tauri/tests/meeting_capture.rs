@@ -302,3 +302,51 @@ async fn monitor_levels_match_saved_samples_without_monitor_files() {
     );
     println!("Synthetic tone peaks: input={:.6}, preview={preview_peak:.6}, recording={recording_peak:.6}, saved={saved_peak:.6}",1500.0/32768.0);
 }
+
+#[test]
+#[ignore = "uses Windows microphone and output; coordinate with the owner"]
+fn compatible_device_switches_preserve_recording_and_mute() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::start(
+        uuid::Uuid::new_v4().to_string(),
+        dir.path().to_path_buf(),
+        Options {
+            microphone: true,
+            system: true,
+            microphone_device: None,
+            output_device: None,
+        },
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    let prefixes: Vec<_> = ["microphone.f32", "system.f32"]
+        .into_iter()
+        .map(|name| (name, std::fs::read(dir.path().join(name)).unwrap()))
+        .collect();
+    assert!(!prefixes[0].1.is_empty());
+    assert!(session
+        .change_device(true, Some("missing-endpoint".into()))
+        .is_err());
+    assert!(session.status().active);
+    session.microphone_muted.store(true, Ordering::Release);
+    session.system_muted.store(true, Ordering::Release);
+    session.change_device(true, None).unwrap();
+    session.change_device(false, None).unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    let status = session.status();
+    assert!(status.active && status.microphone_muted && status.system_muted);
+    let journal = session.finish().unwrap();
+    assert_eq!(journal.tracks.len(), 2);
+    for (name, prefix) in prefixes {
+        assert!(std::fs::read(dir.path().join(name))
+            .unwrap()
+            .starts_with(&prefix));
+    }
+    for track in journal.tracks {
+        let bytes = std::fs::read(dir.path().join(track.filename)).unwrap();
+        let frames = bytes.len() / (track.channels as usize * 4);
+        assert!((frames as f64 / track.rate as f64 - journal.elapsed).abs() < 0.002);
+        let tail = &bytes[bytes.len() - track.rate as usize / 4 * track.channels as usize * 4..];
+        assert!(tail.iter().all(|byte| *byte == 0));
+    }
+}

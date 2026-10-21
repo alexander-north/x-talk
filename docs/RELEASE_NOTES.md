@@ -1,3 +1,7 @@
+# A more compact meeting recorder
+
+Import recordings from either recorder mode, with import, mode selection and shortcuts sharing one footer. Meeting activity animates separate pink microphone and gold system-audio rays. Silent meters show −60 dBFS, and the recording notice sits below the orb. After Stop, choose New recording or Open meeting. Compatible audio devices can be switched during capture; incompatible selections preserve the current device and explain the limitation.
+
 # Device levels and responsive recording
 
 Meeting mode now shows live device meters before recording, without saving audio. Peak meters use a decibel scale and hold short peaks so quieter signals remain visible. Disabled controls use the forbidden cursor, the recorder scales with available space, and Meetings shares Transcripts’ pagination controls. Normal Stop also bounds both source tracks to the same session duration.

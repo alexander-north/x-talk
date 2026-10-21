@@ -575,6 +575,7 @@ pub fn run() {
             crate::meetings::commands::meeting_start,
             crate::meetings::commands::meeting_stop,
             crate::meetings::commands::meeting_mute,
+            crate::meetings::commands::meeting_change_device,
             crate::meetings::commands::meetings_list,
             crate::meetings::commands::meeting_get,
             crate::meetings::commands::meeting_pick,

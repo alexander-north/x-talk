@@ -4,12 +4,12 @@
  import {meetings,type ImportPreview} from '../../meetings/ipc';
  import {duration,message} from '../../ipc';
  import Icon from '../Icon.svelte';
- let {close,created}:{close:()=>void;created:()=>void|Promise<void>}=$props();
+ let {close,created}:{close:()=>void;created:(id:string)=>void|Promise<void>}=$props();
  let dialog=$state<HTMLDialogElement>(),preview=$state<ImportPreview|null>(null),busy=$state(false),hover=$state(false),error=$state('');
  let title=$state(''),date=$state(new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
  $effect(()=>{if(dialog&&!dialog.open)dialog.showModal();});
  async function choose(path?:string){if(busy)return;busy=true;error='';try{const next=path?await meetings.preview(path):await meetings.pick();if(next)preview=next;}catch(e){error=message(e);}finally{busy=false;}}
- async function submit(){if(!preview||busy)return;busy=true;error='';try{await meetings.import(preview.token,title,new Date(`${date}T12:00:00`).toISOString());await created();close();}catch(e){error=message(e);}finally{busy=false;}}
+ async function submit(){if(!preview||busy)return;busy=true;error='';try{const id=await meetings.import(preview.token,title,new Date(`${date}T12:00:00`).toISOString());await created(id);close();}catch(e){error=message(e);}finally{busy=false;}}
  onMount(()=>{const subscription=getCurrentWebview().onDragDropEvent(event=>{
   hover=event.payload.type==='enter'||event.payload.type==='over';
   if(event.payload.type==='drop'){

@@ -9,6 +9,7 @@
  import Recorder from './components/Recorder.svelte';
  import Meetings from './components/meetings/Meetings.svelte';
  import MeetingCapture from './components/meetings/MeetingCapture.svelte';
+ import MeetingImport from './components/meetings/MeetingImport.svelte';
  import {captureStatus} from './meetings/ipc';
  import RecordingsTable from './components/RecordingsTable.svelte';
  import CopyButton from './components/CopyButton.svelte';
@@ -20,6 +21,8 @@
  import {notify} from './notifications';
  let recorderMode=$state<'dictation'|'meeting'>('dictation');
  let meetingBusy=$state(false);
+ let meetingImport=$state(false),meetingId=$state<string|null>(null);
+ async function openMeeting(id:string){meetingId=id;await navigate('meetings');}
  $effect(()=>{if($captureStatus?.id)recorderMode='meeting';else if(snapshot?.capture.active)recorderMode='dictation';});
  import heart from './assets/heart.png';
  let snapshot=$state<AppState|null>(null);
@@ -60,7 +63,7 @@
  async function continueNavigation(save:boolean){error='';if(save&&!await settingsView?.saveAll()){error='Could not save your changes. Keep editing to review the highlighted settings error.';return;}if(!save)settingsView?.discardAll();const action=pendingAction;pendingAction=null;confirm=null;await action?.();}
  function jobLabel(job:Job){if(job.status==='complete')return job.delivery==='copy_failed'?'Saved · clipboard busy; use Copy':job.delivery==='copied'?'Copied to clipboard':'Saved';if(job.status==='unknown')return 'Response lost · retry may incur another charge';return job.status==='running'?job.stage:job.status;}
  async function navigate(next:string){if(compact&&next!=='record'){if(!await run(()=>api.windowMode('full')))return;compact=false;}view=next;if(next==='settings')await refresh();}
- function go(next:string){guard(()=>navigate(next));}
+ function go(next:string){guard(()=>{meetingId=null;return navigate(next);});}
  async function setMode(next:string){if(await run(()=>api.windowMode(next))){if(next==='fullscreen')fullscreen=!fullscreen;else{compact=next==='compact';fullscreen=false;if(compact)view='record';}}}
  function mode(next:string){if(next==='compact')guard(()=>setMode(next));else void setMode(next);}
  async function toggleTheme(){await run(()=>write(s=>({...s,theme:nextTheme(s.theme)})));}
@@ -97,18 +100,19 @@
   {#if snapshot?.shortcut_error}<div class="banner error">{snapshot.shortcut_error.message} Use the Recorder to record.</div>{/if}
   {#each snapshot?.recovery_warnings??[] as warning}<div class="banner recovery-warning" role="alert">{warning.message}</div>{/each}
   {#if paused.length}<section class="recovery"><div><strong>{paused.length} interrupted job{paused.length===1?'':'s'}</strong><small>Paused until you resume. Fresh recordings can continue.</small></div><button disabled={busy||snapshot?.operation_busy||paused.every(j=>j.status==='unknown')} onclick={()=>run(()=>api.recover(paused.filter(j=>j.status==='paused').map(j=>j.id),false))}>Resume available</button><button class="subtle-button" disabled={busy} onclick={()=>confirm='discard'}>Discard pending</button></section>{/if}
-  <MeetingCapture visible={view==='record'&&recorderMode==='meeting'&&!!snapshot} bind:busy={meetingBusy} {compact} dictating={!!snapshot?.capture.active||!!snapshot?.operation_busy}/>
+  <MeetingCapture openMeeting={openMeeting} visible={view==='record'&&recorderMode==='meeting'&&!!snapshot} bind:busy={meetingBusy} {compact} dictating={!!snapshot?.capture.active||!!snapshot?.operation_busy}/>
   {#if loading}<main class="empty">Opening your workspace…</main>
   {:else if !snapshot}<main class="empty"><h1>Could not connect to x-talk</h1><p>{error||'Open this interface through the desktop application.'}</p><button onclick={refresh}>Retry connection</button></main>
   {:else if view==='record'}
-   {#if recorderMode==='dictation'}<Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')} importAudio={()=>run(api.import)}/>{/if}
+   {#if recorderMode==='dictation'}<Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')}/>{/if}
    {#if latestJob&&['failed','unknown','paused'].includes(latestJob.status)}<div class="home-job-error stage-error" role="alert"><strong>{jobLabel(latestJob)}</strong>{#if latestJob.error}<p>{latestJob.error.message}</p>{/if}<button class="subtle-button" onclick={()=>go('recordings')}>View recording</button></div>{/if}
   {:else if view==='recordings'}<RecordingsTable {snapshot} {refreshKey} {busy} {run} {edit} {remove} clearAll={()=>{error='';confirm='clear';}} {inspect} {playback}/>
-  {:else if view==='meetings'}<Meetings {playback} refreshPlayback={refreshProgress} recording={!!snapshot?.capture.active||!!$captureStatus?.id}/>
+  {:else if view==='meetings'}<Meetings initialId={meetingId} {playback} refreshPlayback={refreshProgress} recording={!!snapshot?.capture.active||!!$captureStatus?.id}/>
   {:else}<SettingsView bind:this={settingsView} {snapshot} {write} {refresh} {guard}/>
   {/if}
-  {#if view==='record'&&snapshot}<div class="recorder-modes" role="group" aria-label="Recording mode">{#each ['dictation','meeting'] as mode}<button class:selected={recorderMode===mode} aria-pressed={recorderMode===mode} disabled={!!snapshot.capture.active||!!snapshot.capture.finalizing||snapshot.operation_busy||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode=mode as 'dictation'|'meeting'}>{mode==='dictation'?'Dictation':'Meeting'}</button>{/each}</div>{/if}
+  {#if view==='record'&&snapshot}<div class="recorder-bottom"><button class="import-footer" disabled={busy||snapshot.operation_busy||!!snapshot.capture.active||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode==='dictation'?run(api.import):meetingImport=true}><Icon name="upload" size={13}/>Import audio</button><div class="recorder-modes" role="group" aria-label="Recording mode">{#each ['dictation','meeting'] as mode}<button class:selected={recorderMode===mode} aria-pressed={recorderMode===mode} disabled={!!snapshot.capture.active||!!snapshot.capture.finalizing||snapshot.operation_busy||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode=mode as 'dictation'|'meeting'}>{mode==='dictation'?'Dictation':'Meeting'}</button>{/each}</div><div class="shortcut-hints">{#if snapshot.settings.shortcuts.toggle}<span><kbd>{snapshot.settings.shortcuts.toggle}</kbd> record / stop</span>{/if}{#if snapshot.settings.shortcuts.cancel}<span><kbd>{snapshot.settings.shortcuts.cancel}</kbd> cancel</span>{/if}</div></div>{/if}
  </div>
+ {#if meetingImport}<MeetingImport close={()=>meetingImport=false} created={id=>openMeeting(id)}/>{/if}
  <ToastHost/>
  {#if confirm}<dialog bind:this={dialog} class="modal" class:wide={confirm==='edit'||confirm==='text'} aria-labelledby="dialog-title" oncancel={()=>confirm=null} onclose={()=>confirm=null}>
   <div class="dialog-heading"><h2 id="dialog-title">{confirm==='edit'?'Edit recording':confirm==='text'?(textKind==='transcript'?'Transcript':'Transformed output'):confirm==='delete'?'Delete this recording?':confirm==='clear'?'Clear all recordings?':confirm==='discard'?'Discard interrupted work?':confirm==='unsaved'?'Save your changes?':'Quit x-talk?'}</h2><button class="icon-button" onclick={()=>confirm=null} aria-label="Close dialog"><Icon name="close" size={18}/></button></div>

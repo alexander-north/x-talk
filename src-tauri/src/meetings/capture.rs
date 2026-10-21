@@ -138,6 +138,13 @@ pub struct Track {
     pub channels: u16,
     pub microphone: bool,
 }
+#[cfg(any(windows, test))]
+fn compatible_format(current: &Track, next: &Track) -> Result<()> {
+    if current.rate != next.rate || current.channels != next.channels {
+        return Err(AppError::input("The selected device uses a different sample rate or channel count. Recording continues on the current device. Stop this meeting before choosing that device."));
+    }
+    Ok(())
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Journal {
     pub id: String,
@@ -149,7 +156,14 @@ pub struct Journal {
     #[serde(default)]
     pub warning: Option<String>,
 }
+#[cfg_attr(not(windows), allow(dead_code))]
+struct DeviceChange {
+    microphone: bool,
+    device: Option<String>,
+    reply: std::sync::mpsc::SyncSender<Result<()>>,
+}
 pub struct Session {
+    changes: std::sync::mpsc::Sender<DeviceChange>,
     pub status: Arc<Mutex<Status>>,
     pub stop: Arc<AtomicBool>,
     pub microphone_muted: Arc<AtomicBool>,
@@ -173,6 +187,7 @@ impl Session {
         let microphone_muted = Arc::new(AtomicBool::new(false));
         let system_muted = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let (changes, changes_rx) = std::sync::mpsc::channel();
         let state = status.clone();
         let stop_worker = stop.clone();
         let mic = microphone_muted.clone();
@@ -189,6 +204,7 @@ impl Session {
                     mic,
                     system,
                     &ready_tx,
+                    changes_rx,
                 );
                 if let Err(error) = &result {
                     let _ = ready_tx.try_send(Err(error.clone()));
@@ -201,6 +217,7 @@ impl Session {
             })?;
         match ready_rx.recv_timeout(std::time::Duration::from_secs(15)) {
             Ok(Ok(())) => Ok(Self {
+                changes,
                 status,
                 stop,
                 microphone_muted,
@@ -224,6 +241,19 @@ impl Session {
         status.microphone_muted = self.microphone_muted.load(Ordering::Acquire);
         status.system_muted = self.system_muted.load(Ordering::Acquire);
         status
+    }
+    pub fn change_device(&self, microphone: bool, device: Option<String>) -> Result<()> {
+        let (reply, response) = std::sync::mpsc::sync_channel(1);
+        self.changes
+            .send(DeviceChange {
+                microphone,
+                device,
+                reply,
+            })
+            .map_err(|_| AppError::input("Meeting capture has stopped."))?;
+        response.recv().map_err(|_| {
+            AppError::input("Meeting capture stopped before the device could change.")
+        })?
     }
     pub fn finish(&self) -> Result<Journal> {
         self.stop.store(true, Ordering::Release);
@@ -257,6 +287,7 @@ fn run(
     _: Arc<AtomicBool>,
     _: Arc<AtomicBool>,
     _: &std::sync::mpsc::SyncSender<Result<()>>,
+    _: std::sync::mpsc::Receiver<DeviceChange>,
 ) -> Result<Journal> {
     Err(AppError::input(
         "System audio recording is supported on Windows.",
@@ -273,6 +304,7 @@ fn run(
     mic_muted: Arc<AtomicBool>,
     system_muted: Arc<AtomicBool>,
     ready: &std::sync::mpsc::SyncSender<Result<()>>,
+    changes: std::sync::mpsc::Receiver<DeviceChange>,
 ) -> Result<Journal> {
     native::record(
         id,
@@ -283,6 +315,7 @@ fn run(
         mic_muted,
         system_muted,
         ready,
+        changes,
     )
 }
 
@@ -709,6 +742,7 @@ mod native {
         mic_muted: Arc<AtomicBool>,
         system_muted: Arc<AtomicBool>,
         ready: &std::sync::mpsc::SyncSender<Result<()>>,
+        changes: std::sync::mpsc::Receiver<super::DeviceChange>,
     ) -> Result<Journal> {
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED)
@@ -780,6 +814,47 @@ mod native {
         while !stop.load(Ordering::Acquire)
             && clock.elapsed().as_secs_f64() < super::super::domain::MAX_SECONDS
         {
+            while let Ok(change) = changes.try_recv() {
+                let result = (|| -> Result<()> {
+                    let old = inputs
+                        .iter_mut()
+                        .find(|input| input.track.microphone == change.microphone)
+                        .ok_or_else(|| {
+                            AppError::input("This source was not enabled when recording started.")
+                        })?;
+                    // Open without a writer: a failed change cannot truncate the saved track.
+                    let mut next = unsafe {
+                        Input::open(
+                            &enumerator,
+                            None,
+                            change.microphone,
+                            change.device.as_deref(),
+                        )?
+                    };
+                    super::compatible_format(&old.track, &next.track)?;
+                    unsafe {
+                        next.client.Start().map_err(native_error)?;
+                    }
+                    let muted = if change.microphone {
+                        mic_muted.load(Ordering::Acquire)
+                    } else {
+                        system_muted.load(Ordering::Acquire)
+                    };
+                    unsafe {
+                        old.drain(epoch, muted, clock.elapsed().as_secs_f64())?;
+                    }
+                    next.frames = old.frames;
+                    next.output = old.output.take();
+                    next.discontinuities = old.discontinuities;
+                    next.was_muted = muted;
+                    next.audible_after = old.audible_after;
+                    // QPC packet timestamps preserve the common timeline, filling a switch gap
+                    // with silence and skipping any overlapping frames from the new endpoint.
+                    *old = next;
+                    Ok(())
+                })();
+                let _ = change.reply.send(result);
+            }
             let result: Result<()> = (|| {
                 for input in &mut inputs {
                     let muted = if input.track.microphone {
@@ -890,6 +965,22 @@ mod native {
 #[cfg(test)]
 mod meter_tests {
     use super::PeakMeter;
+    #[test]
+    fn device_changes_preserve_track_format() {
+        let track = super::Track {
+            filename: "test.f32".into(),
+            rate: 48000,
+            channels: 2,
+            microphone: true,
+        };
+        assert!(super::compatible_format(&track, &track).is_ok());
+        let mut different = track.clone();
+        different.rate = 44100;
+        assert!(super::compatible_format(&track, &different).is_err());
+        different.rate = track.rate;
+        different.channels = 1;
+        assert!(super::compatible_format(&track, &different).is_err());
+    }
     #[test]
     fn peak_survives_empty_packets_then_decays_and_mute_clears_it() {
         let mut meter = PeakMeter::default();
