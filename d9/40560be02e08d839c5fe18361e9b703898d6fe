@@ -1,0 +1,30 @@
+tests/e2e/meetings.mjs
+  s_b7d8957ea62ed3::t_37e54560ea801a 85
+  s_b7d8957ea62ed3::t_966fdd981dfae2 70-77
+docs/RELEASE_NOTES.md
+  s_b7d8957ea62ed3::t_a7a94bdfbb7474 3
+scripts/native-dialog.ps1
+  s_b7d8957ea62ed3::t_a86eae9fbd51d0 1,39,44,47
+src-tauri/src/meetings/commands.rs
+  s_b7d8957ea62ed3::t_06f3a745e77846 358,378,383-388,401
+src/components/meetings/Meetings.svelte
+  s_b7d8957ea62ed3::t_2ea439ca1fcd4c 119
+src/meetings/ipc.ts
+  s_b7d8957ea62ed3::t_31232f8c9da6da 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d940560be02e08d839c5fe18361e9b703898d6fe",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
