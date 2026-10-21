@@ -1,0 +1,23 @@
+tests/e2e/meetings.mjs
+  s_b7d8957ea62ed3::t_180fcb155efc90 76-77,86
+docs/AGENT_WORKFLOW.md
+  s_b7d8957ea62ed3::t_87082968215659 74
+scripts/native-dialog.ps1
+  s_b7d8957ea62ed3::t_c13e304034cbfb 5,9-10,43-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06706c450bf14a7c3f172d78e0cb0f9aa81e14ba",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
