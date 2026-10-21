@@ -1,0 +1,37 @@
+SPEC.md
+  s_b7d8957ea62ed3::t_63dadfec7ab7f5 78
+docs/RELEASE_NOTES.md
+  s_b7d8957ea62ed3::t_7b98574a104ecb 1-4
+package-lock.json
+  s_b7d8957ea62ed3::t_0e7636d90eae91 3,9
+package.json
+  s_b7d8957ea62ed3::t_957d0255b9b79e 3
+src-tauri/Cargo.lock
+  s_b7d8957ea62ed3::t_68b4f4f59da3ed 6292
+src-tauri/Cargo.toml
+  s_b7d8957ea62ed3::t_985fcff1ae3e0d 3
+src-tauri/tauri.conf.json
+  s_b7d8957ea62ed3::t_4a5d13430bba84 4
+src/components/meetings/MeetingCapture.svelte
+  s_b7d8957ea62ed3::t_dd5fec559099b2 46
+src/glass.css
+  s_b7d8957ea62ed3::t_6cf4c7345f66cd 122-123
+tests/e2e/meeting-recording.mjs
+  s_b7d8957ea62ed3::t_48cd84dc653f1f 49-50,53-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c729909cf9a807bfbcb972b288c6061702469fd",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
