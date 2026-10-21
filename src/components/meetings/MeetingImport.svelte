@@ -6,10 +6,10 @@
  import Icon from '../Icon.svelte';
  let {close,created}:{close:()=>void;created:(id:string)=>void|Promise<void>}=$props();
  let dialog=$state<HTMLDialogElement>(),preview=$state<ImportPreview|null>(null),busy=$state(false),hover=$state(false),error=$state('');
- let title=$state(''),date=$state(new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
+ let title=$state(''),date=$state('');
  $effect(()=>{if(dialog&&!dialog.open)dialog.showModal();});
  async function choose(path?:string){if(busy)return;busy=true;error='';try{const next=path?await meetings.preview(path):await meetings.pick();if(next)preview=next;}catch(e){error=message(e);}finally{busy=false;}}
- async function submit(){if(!preview||busy)return;busy=true;error='';try{const id=await meetings.import(preview.token,title,new Date(`${date}T12:00:00`).toISOString());await created(id);close();}catch(e){error=message(e);}finally{busy=false;}}
+ async function submit(){if(!preview||busy)return;busy=true;error='';try{const id=await meetings.import(preview.token,title,date||undefined);await created(id);close();}catch(e){error=message(e);}finally{busy=false;}}
  onMount(()=>{const subscription=getCurrentWebview().onDragDropEvent(event=>{
   hover=event.payload.type==='enter'||event.payload.type==='over';
   if(event.payload.type==='drop'){
@@ -24,7 +24,7 @@
   <button type="button" class="drop-zone" class:hover disabled={busy} onclick={()=>choose()}><Icon name="upload" size={28}/><strong>{busy&&!preview?'Checking recording…':preview?.filename??'Choose a recording or drop it here'}</strong><span>Audio or video · MP3, M4A, WAV, MP4, MOV, MKV, WebM and more</span></button>
   {#if preview}<div class="import-preview"><p>{duration(preview.inspection.duration)} · {preview.inspection.channels===2?'Stereo':'Mono'}</p>{#if preview.inspection.audio_streams>1}<p class="banner">This file contains {preview.inspection.audio_streams} audio tracks. Only the first audio track will be imported; the others will be omitted.</p>{/if}</div>{/if}
   <label>Meeting title (optional)<input aria-label="Import meeting title" bind:value={title} maxlength="500" placeholder="AI will name this after transcription"/></label>
-  <label>Recording date<input aria-label="Import recording date" type="date" bind:value={date} required/></label>
+  <label>Meeting date (optional)<input aria-label="Import recording date" type="date" bind:value={date}/></label>
   <p class="help">Video stays in its original location. Only audio is saved and sent to AssemblyAI; transcript text goes to OpenAI for the brief.</p>
   {#if error}<p class="banner error" role="alert">{error}</p>{/if}
   <button class="primary submit-import" disabled={busy||!preview}>{busy?'Adding recording…':'Create Transcript and Brief'}</button>

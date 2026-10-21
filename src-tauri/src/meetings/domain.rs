@@ -76,6 +76,8 @@ pub struct ActionItem {
 pub struct BriefContent {
     pub title: String,
     pub summary: String,
+    #[serde(default)]
+    pub summary_segment_ids: Vec<String>,
     pub topics: Vec<Evidence>,
     pub decisions: Vec<Evidence>,
     pub actions: Vec<ActionItem>,
@@ -179,12 +181,47 @@ impl Attempt {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MeetingDate {
+    pub value: String,
+    pub precision: String,
+    pub source: String,
+    pub timezone: Option<String>,
+}
+impl MeetingDate {
+    pub fn entered(value: &str) -> Result<Self> {
+        if value.len() == 10 && chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok() {
+            return Ok(Self {
+                value: value.into(),
+                precision: "date".into(),
+                source: "user_entered".into(),
+                timezone: None,
+            });
+        }
+        let parsed = chrono::DateTime::parse_from_rfc3339(value)
+            .map_err(|_| AppError::input("Enter YYYY-MM-DD, a timestamp with a time-zone offset, or leave the meeting date blank."))?;
+        Ok(Self {
+            value: value.into(),
+            precision: "timestamp".into(),
+            source: "user_entered".into(),
+            timezone: Some(parsed.offset().to_string()),
+        })
+    }
+    pub fn recorded(value: &str) -> Result<Self> {
+        let mut date = Self::entered(value)?;
+        date.source = "recording_start".into();
+        Ok(date)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Meeting {
     pub id: String,
     pub title: String,
     pub manual_title: bool,
     pub added_at: String,
     pub call_at: String,
+    #[serde(default)]
+    pub meeting_date: Option<MeetingDate>,
     pub duration: Option<f64>,
     pub source: SourceKind,
     pub filename: Option<String>,
@@ -202,6 +239,8 @@ pub struct Meeting {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Summary {
     pub call_at: String,
+    #[serde(default)]
+    pub meeting_date: Option<MeetingDate>,
     pub id: String,
     pub title: String,
     pub added_at: String,
@@ -237,6 +276,7 @@ impl Summary {
             added_at: meeting.added_at.clone(),
             duration: meeting.duration,
             call_at: meeting.call_at.clone(),
+            meeting_date: meeting.meeting_date.clone(),
             status: meeting.attempt.stage.clone(),
             preview: meeting
                 .brief
@@ -257,6 +297,7 @@ impl Meeting {
             title,
             manual_title: false,
             call_at: added_at.clone(),
+            meeting_date: None,
             added_at,
             duration: None,
             source,
@@ -270,6 +311,27 @@ impl Meeting {
             capture_warning: None,
             attempt: Attempt::queued(false),
         }
+    }
+    pub fn set_date(&mut self, value: &str) -> Result<()> {
+        if self
+            .meeting_date
+            .as_ref()
+            .is_some_and(|date| date.value == value)
+        {
+            return Ok(());
+        }
+        let next = if value.is_empty() {
+            None
+        } else {
+            Some(MeetingDate::entered(value)?)
+        };
+        if next.is_some() {
+            self.call_at = value.into();
+        } else if self.meeting_date.is_some() {
+            self.call_at = self.added_at.clone();
+        }
+        self.meeting_date = next;
+        Ok(())
     }
     pub fn brief_stale(&self) -> bool {
         self.brief.content.is_some()
@@ -426,6 +488,15 @@ impl BriefContent {
         if self.title.trim().is_empty() || self.title.len() > 720 || self.summary.is_empty() {
             return Err(AppError::input(
                 "The meeting brief has an invalid title or summary.",
+            ));
+        }
+        if self
+            .summary_segment_ids
+            .iter()
+            .any(|id| !ids.contains(id.as_str()))
+        {
+            return Err(AppError::input(
+                "The brief summary cites invalid transcript evidence.",
             ));
         }
         for (text, refs) in self

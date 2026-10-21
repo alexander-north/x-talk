@@ -1,3 +1,7 @@
+# Responsive meeting activity and compact JSON
+
+Meetings now use dictation’s frequency-driven animation, responding to either audio source. The recording notice clears the full ray boundary. Default JSON copies preserve complete turns with less repetition; Copy detailed JSON retains word-level audit evidence. Meeting dates can be unknown and distinguish user-entered dates from recording timestamps. New AI briefs are instructed to preserve tentative statements and contradictions, and include validated summary citations.
+
 # A more compact meeting recorder
 
 Import recordings from either recorder mode, with import, mode selection and shortcuts sharing one footer. Meeting activity animates separate pink microphone and gold system-audio rays. Silent meters show −60 dBFS, and the recording notice sits below the orb. After Stop, choose New recording or Open meeting. Compatible audio devices can be switched during capture; incompatible selections preserve the current device and explain the limitation.

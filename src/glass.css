@@ -119,4 +119,5 @@
 
 .app .recorder-bottom .recorder-modes button{padding:8px clamp(8px,2vw,22px)}
 
-.app .meeting-recorder .recording-focus:has(.responsibility){padding-bottom:32px}
+.app .meeting-recorder .recording-focus:has(.responsibility){padding-bottom:44px}
+.app .meeting-recorder .recording-focus:has(.responsibility) .record-orbit{transform:translateY(-8px);--orb-size:clamp(32px,min(42cqh,38cqw),210px)}

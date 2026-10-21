@@ -247,7 +247,8 @@ Every topic, decision, action and explicit open question must cite 1–3 support
 Decisions are only choices explicitly agreed or finalized. Advice, suggestions, possible plans and descriptions of current practices are NOT decisions. Return an empty array if none were agreed.
 Actions are explicit commitments or assigned tasks. Preserve conditions, use the supplied speaker name as owner when identifiable, otherwise null. Due dates are null unless stated; retain relative dates as spoken.
 Open questions were explicitly raised and unresolved. Suggested follow-up questions are your suggestions, not claims about what was asked.
-Preserve uncertainty. Do not invent quotes, identities, commitments, owners or deadlines. Use empty arrays where appropriate.";
+Preserve uncertainty, qualifications, self-corrections and contradictions explicitly. Distinguish firm decisions and commitments from intentions, possibilities and aspirations. If three interview rounds are intended but an additional final round is possible, preserve both; never turn that into a maximum of three. Do not resolve conflicting statements without explicit transcript evidence. Summary claims must also be supported by summary_segment_ids using the supplied citation numbers. Suggested follow-ups remain AI suggestions, never participant commitments.
+Do not invent quotes, identities, commitments, owners or deadlines. Use empty arrays where appropriate.";
 
 pub fn brief_schema() -> Value {
     let evidence = json!({"type": "object", "additionalProperties": false,
@@ -258,17 +259,18 @@ pub fn brief_schema() -> Value {
             "owner":{"type":["string","null"]},"due":{"type":["string","null"]}},
         "required":["text","segment_ids","owner","due"]});
     json!({"type":"object","additionalProperties":false,"properties":{
-        "title":{"type":"string"},"summary":{"type":"string"},
+        "title":{"type":"string"},"summary":{"type":"string"},"summary_segment_ids":{"type":"array","items":{"type":"string"}},
         "topics":{"type":"array","items":evidence},"decisions":{"type":"array","items":evidence},
         "actions":{"type":"array","items":action},"open_questions":{"type":"array","items":evidence},
         "suggested_follow_ups":{"type":"array","items":{"type":"string"}}
-    },"required":["title","summary","topics","decisions","actions","open_questions","suggested_follow_ups"]})
+    },"required":["title","summary","summary_segment_ids","topics","decisions","actions","open_questions","suggested_follow_ups"]})
 }
 
 /// Compact request-local citation numbers avoid asking the model to reproduce
 /// opaque stored IDs. The public JSON continues to use stable original turn IDs.
 pub fn brief_response_schema(turn_count: usize) -> Value {
     let mut schema = brief_schema();
+    schema["properties"]["summary_segment_ids"] = json!({"type":"array","minItems":1,"maxItems":12,"items":{"type":"integer","minimum":1,"maximum":turn_count.max(1)}});
     for section in ["topics", "decisions", "actions", "open_questions"] {
         let properties = &mut schema["properties"][section]["items"]["properties"];
         properties["segment_ids"] = json!({"type":"array","minItems":1,"maxItems":3,"items":{"type":"integer","minimum":1,"maximum":turn_count.max(1)}});
@@ -278,6 +280,23 @@ pub fn brief_response_schema(turn_count: usize) -> Value {
 }
 pub fn parse_generated_brief(text: &str, transcript: &Transcript) -> Result<BriefContent> {
     let mut value: Value = serde_json::from_str(text)?;
+    let summary_refs = value["summary_segment_ids"]
+        .as_array_mut()
+        .filter(|refs| !refs.is_empty() && refs.len() <= 12)
+        .ok_or_else(|| {
+            AppError::input("The brief summary needs supporting transcript citations.")
+        })?;
+    for reference in summary_refs {
+        let turn = reference
+            .as_u64()
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|n| usize::try_from(n).ok())
+            .and_then(|n| transcript.turns.get(n))
+            .ok_or_else(|| {
+                AppError::input("The brief summary cites invalid transcript evidence.")
+            })?;
+        *reference = Value::String(turn.id.clone());
+    }
     for section in ["topics", "decisions", "actions", "open_questions"] {
         for item in value[section].as_array_mut().into_iter().flatten() {
             for reference in item["segment_ids"].as_array_mut().into_iter().flatten() {

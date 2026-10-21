@@ -34,12 +34,17 @@ impl crate::meetings::providers::MeetingProvider for TestProviders {
     }
     async fn brief(
         &self,
-        _: &crate::meetings::domain::Meeting,
+        meeting: &crate::meetings::domain::Meeting,
     ) -> Result<crate::meetings::providers::GeneratedBrief> {
         use crate::meetings::domain::*;
         Ok(crate::meetings::providers::GeneratedBrief {
             model: Some("fixture-brief".into()),
             content: BriefContent {
+                summary_segment_ids: meeting
+                    .transcript
+                    .as_ref()
+                    .map(|t| t.turns.iter().take(2).map(|t| t.id.clone()).collect())
+                    .unwrap_or_default(),
                 title: "Updated proposal and next steps".into(),
                 summary: "The speakers agreed to send an updated proposal tomorrow.".into(),
                 topics: vec![Evidence {

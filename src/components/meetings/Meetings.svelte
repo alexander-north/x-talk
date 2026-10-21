@@ -1,7 +1,7 @@
 <script lang="ts">
  import {onMount} from 'svelte';
  import {listen} from '@tauri-apps/api/event';
- import {meetings,stageLabel,type Summary,type View,type Edit,type Evidence} from '../../meetings/ipc';
+ import {meetings,stageLabel,meetingDateLabel,type Summary,type View,type Edit,type Evidence} from '../../meetings/ipc';
  import {duration,message} from '../../ipc';
  import Pagination from '../Pagination.svelte';
  import MeetingImport from './MeetingImport.svelte';
@@ -42,7 +42,7 @@
   busy=true;
   try{await work();notify(success);await Promise.all([load(),refreshPlayback()]);return true;}catch(e){notify(message(e),true);return false;}finally{busy=false;}
  }
- async function open(id:string){await run(async()=>{selected=await meetings.get(id);tab='brief';filter='';speakerFilter='';editTurn='';title=selected.meeting.title;callAt=selected.meeting.call_at;});}
+ async function open(id:string){await run(async()=>{selected=await meetings.get(id);tab='brief';filter='';speakerFilter='';editTurn='';title=selected.meeting.title;callAt=selected.meeting.meeting_date?.value??'';});}
  async function edit(change:Edit){if(!current)return;const {id,revision}=current;return run(async()=>{selected=await meetings.edit(id,revision,change);},'Saved');}
  function speakerColor(id:string){let hash=0;for(const c of id)hash=(hash*31+c.charCodeAt(0))>>>0;return `hsl(${hash%360} 45% 55%)`;}
  function name(id:string){return transcript?.speakers.find(s=>s.id===id)?.name??`Speaker ${id}`;}
@@ -66,7 +66,7 @@
     <h2><button class="meeting-title" onclick={()=>open(row.id)}>{row.title}</button></h2>
     <div class="meeting-preview"><button class="text-preview" onclick={()=>open(row.id)}>{row.preview??(row.status==='failed'?'Processing needs attention. Open this recording for details.':'Your transcript and meeting brief will appear here when processing finishes.')}</button></div>
     <p class="recording-meta">{duration(row.duration??0)} · {row.speakers?`${row.speakers} speakers`:'Speakers pending'}{#if !row.audio_available&&!['importing','extracting','converting','queued'].includes(row.status)} · Audio not retained{/if}</p>
-    <div class="card-bottom"><span>{new Date(row.call_at).toLocaleDateString()}</span><button class="subtle-button" onclick={()=>open(row.id)}>Open recording <span aria-hidden="true">↗</span></button></div>
+    <div class="card-bottom"><span>{meetingDateLabel(row.meeting_date)}</span><button class="subtle-button" onclick={()=>open(row.id)}>Open recording <span aria-hidden="true">↗</span></button></div>
    </article>
    {:else}<div class="empty"><Icon name="heart" size={32}/><h2>{search?'No meetings found':'Every conversation has a next step'}</h2><p>{search?'Try another search.':'Import an audio or video recording to create a transcript and meeting brief.'}</p></div>{/each}
   </div>
@@ -88,7 +88,7 @@
   {#if tab==='brief'}
    <div class="meeting-card-heading"><h2>Meeting brief</h2><button class="subtle-button" disabled={busy||!transcript||!canRetry} onclick={()=>edit({kind:'retry',transcription:false})}>{#if processing(current.transcription_status)}<Activity/>{:else}<Icon name="spark" size={16}/>{/if}Regenerate brief</button></div>
    {#if current.brief.stale}<p class="banner">This brief predates transcript or speaker changes. Regenerate it to reflect your edits.</p>{/if}
-   {#if brief}<p class="meeting-summary">{brief.summary}</p>
+   {#if brief}<p class="meeting-summary">{brief.summary}</p><div class="actions summary-evidence"><span class="help">AI-generated brief</span>{#each brief.summary_segment_ids??[] as id}<button class="subtle-button" onclick={()=>supporting(id)}>Source {id.replace('seg_','')}</button>{/each}</div>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus and scroll this region.) -->
    <div class="panel-scroll" role="region" aria-label="Brief content" tabindex="0">
     {#each ([['Topics',brief.topics],['Decisions',brief.decisions],['Open questions',brief.open_questions]] as [string,Evidence[]][]) as section}
@@ -100,7 +100,7 @@
    </div>{:else}<div class="empty">{#if processing(current.transcription_status)}<Activity size={30}/>{:else}<Icon name="spark" size={30}/>{/if}<h2>{current.brief.status==='failed'?'Brief needs attention':'Your brief is on its way'}</h2><p>{current.brief.error??'The transcript is saved independently. You can review and copy it as soon as it is ready.'}</p></div>{/if}
   {:else if tab==='transcript'}
    <div class="table-toolbar"><label class="search-field"><Icon name="search" size={16}/><input bind:value={filter} placeholder="Find in transcript…" aria-label="Search transcript"/></label><select bind:value={speakerFilter} aria-label="Filter speaker"><option value="">All speakers</option>{#each transcript?.speakers??[] as speaker}<option value={speaker.id}>{speaker.name}</option>{/each}</select></div>
-   <p class="help">Copy meeting JSON always includes the complete corrected transcript, original evidence, and brief, regardless of these filters.</p>
+   <p class="help">Copy meeting JSON always includes the complete corrected transcript, correction provenance, and brief, regardless of these filters.</p>
    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus and scroll this region.) -->
    <div class="panel-scroll" role="region" aria-label="Transcript turns" tabindex="0">
    {#each turns as turn (turn.id)}<article class="meeting-turn" id={`turn-${turn.id}`} style:border-left={`3px solid ${speakerColor(turn.speaker_id)}`}>
@@ -114,7 +114,7 @@
    {#each transcript?.speakers??[] as speaker}<form class="speaker-row" onsubmit={e=>{e.preventDefault();const data=new FormData(e.currentTarget);void edit({kind:'name',speaker:speaker.id,name:String(data.get('name'))});}}><div class="speaker-name"><label>Speaker name<input name="name" value={speaker.name} maxlength="200" required/></label><button disabled={busy||editingBlocked}>Save name</button></div><small>{speaker.turn_count} turns · {speaker.word_count} words · {duration(speaker.estimated_turn_coverage_seconds)}</small></form>{/each}
    <h3>Merge speakers</h3><p class="help">Combine two labels that refer to the same person. Merges can be undone in reverse order.</p><div class="actions"><select bind:value={mergeFrom} aria-label="Speaker to merge"><option value="">Choose speaker</option>{#each transcript?.speakers??[] as s}<option value={s.id}>{s.name}</option>{/each}</select><span>into</span><select bind:value={mergeInto} aria-label="Merge destination"><option value="">Choose speaker</option>{#each transcript?.speakers??[] as s}<option value={s.id}>{s.name}</option>{/each}</select><button disabled={busy||editingBlocked||!mergeFrom||!mergeInto||mergeFrom===mergeInto} onclick={()=>confirmation='merge'}>Preview merge</button><button disabled={busy||editingBlocked||!selected?.merges} onclick={()=>edit({kind:'undo_merge'})}>Undo last merge</button></div>
   {:else}
-   <h2>Meeting details</h2><form onsubmit={e=>{e.preventDefault();void edit({kind:'metadata',title,call_at:callAt});}}><label>Title<input bind:value={title} maxlength="500" required/></label><label>Meeting date<input bind:value={callAt} required/></label><button disabled={busy}>Save details</button></form>
+   <h2>Meeting details</h2><button disabled={busy} onclick={()=>run(()=>meetings.copy(current!.id,true),'Detailed meeting JSON copied')}>Copy detailed JSON</button><form onsubmit={e=>{e.preventDefault();void edit({kind:'metadata',title,call_at:callAt});}}><label>Title<input bind:value={title} maxlength="500" required/></label><label>Meeting date (optional)<input bind:value={callAt} placeholder="YYYY-MM-DD or timestamp with time zone"/></label><p class="help">{current.meeting_date?`${current.meeting_date.source==='recording_start'?'Recording start from this computer':'User-entered date'} · ${current.meeting_date.timezone??'Time and time zone unknown'}`:'Meeting date unknown; import dates and filenames are not treated as evidence.'}</p><button disabled={busy}>Save details</button></form>
    <dl><dt>Source</dt><dd>{current.source}{current.filename?` · ${current.filename}`:''}</dd><dt>Audio</dt><dd>{current.audio_available?'Retained':'No longer retained; transcript and brief remain available'}</dd><dt>Transcription</dt><dd>{transcript?`${transcript.provider} · ${transcript.model??'Model not reported'}`:'Pending'}</dd><dt>Brief</dt><dd>{current.brief.provider} · {current.brief.actual_model??current.brief.model}</dd></dl>
    <div class="actions"><button disabled={busy||!current.audio_available} onclick={()=>run(()=>meetings.download(current!.id),'Audio saved')}><Icon name="download" size={16}/>Download audio</button><button disabled={busy||!current.audio_available||!canRetry} onclick={()=>confirmation='retry'}>Re-transcribe</button><button class="danger" disabled={busy||['importing','extracting','converting'].includes(current.transcription_status)} onclick={()=>confirmation='delete'}>Delete meeting</button></div>
   {/if}
@@ -139,5 +139,5 @@
  .meeting-panel label{display:block;margin:12px 0}.meeting-panel input,.meeting-panel textarea{width:100%}.meeting-panel select{max-width:250px}
  .meeting-panel dl{display:grid;grid-template-columns:120px 1fr;gap:16px;margin:28px 0}.meeting-panel dd{margin:0}
  @media(max-width:700px){.meetings-page{padding:20px}.page-heading,.meeting-preview,.speaker-row{flex-direction:column;align-items:stretch}.meeting-card-heading{align-items:flex-start}.meeting-panel{padding:18px}}
- .detail-view{display:flex;flex-direction:column;min-height:0;overflow:hidden;flex:1}.detail-view>.page-heading,.meeting-review-toolbar,.back-to-meetings{flex-shrink:0}.back-to-meetings{align-self:flex-start}.detail-view .meeting-panel{min-height:0;flex:1;overflow:auto}.detail-view .meeting-panel.contained{display:flex;flex-direction:column;overflow:hidden}.contained>.table-toolbar,.contained>.help,.contained>.meeting-card-heading{flex-shrink:0}.panel-scroll{min-height:0;overflow:auto;flex:1;overscroll-behavior:contain;padding-right:10px}.meeting-summary{max-height:18vh;overflow:auto;flex-shrink:0}.turn-name{display:flex;align-items:center;gap:8px}
+ .detail-view{display:flex;flex-direction:column;min-height:0;overflow:hidden;flex:1}.detail-view>.page-heading,.meeting-review-toolbar,.back-to-meetings{flex-shrink:0}.back-to-meetings{align-self:flex-start}.detail-view .meeting-panel{min-height:0;flex:1;overflow:auto}.detail-view .meeting-panel.contained{display:flex;flex-direction:column;overflow:hidden}.contained>.table-toolbar,.contained>.help,.contained>.meeting-card-heading{flex-shrink:0}.panel-scroll{min-height:0;overflow:auto;flex:1;overscroll-behavior:contain;padding-right:10px}.summary-evidence{flex-shrink:0;max-height:64px;overflow:auto}.meeting-summary{max-height:18vh;overflow:auto;flex-shrink:0}.turn-name{display:flex;align-items:center;gap:8px}
 </style>

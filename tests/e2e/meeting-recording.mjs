@@ -42,8 +42,8 @@ suite('Meeting native recording',()=>{
   if(!rejected||!(await command('meeting_capture_status')).active)throw Error('Dictation interfered with meeting capture');
   for(const height of [460,650]){
    await browser.setWindowSize(520,height);await browser.pause(100);
-   const fits=await browser.execute(()=>{const main=document.querySelector('.meeting-recorder'),orb=main.querySelector('.record-orbit').getBoundingClientRect(),sources=main.querySelector('.meeting-sources').getBoundingClientRect();return {scroll:main.scrollHeight,height:main.clientHeight,orbTop:orb.top,orbBottom:orb.bottom,sourceTop:sources.top,noticeBottom:main.querySelector('.responsibility')?.getBoundingClientRect().bottom??0,top:main.getBoundingClientRect().top};});
-   if(fits.scroll>fits.height+1||fits.orbBottom>fits.sourceTop||fits.noticeBottom>fits.sourceTop||fits.orbTop<fits.top){await browser.saveScreenshot('.tmp/active-meeting-overflow.png');throw Error(`Active meeting controls overflow at ${height}: ${JSON.stringify(fits)}`);}
+   const fits=await browser.execute(()=>{const main=document.querySelector('.meeting-recorder'),orb=main.querySelector('.record-orbit').getBoundingClientRect(),sources=main.querySelector('.meeting-sources').getBoundingClientRect();return {scroll:main.scrollHeight,height:main.clientHeight,orbTop:orb.top,orbBottom:orb.bottom,sourceTop:sources.top,noticeBottom:main.querySelector('.responsibility')?.getBoundingClientRect().bottom??0,noticeTop:main.querySelector('.responsibility')?.getBoundingClientRect().top??9999,rayBottom:orb.top+orb.height/2+orb.height*.94,top:main.getBoundingClientRect().top};});
+   if(fits.scroll>fits.height+1||fits.orbBottom>fits.sourceTop||fits.noticeBottom>fits.sourceTop||fits.noticeTop<fits.rayBottom||fits.orbTop<fits.top){await browser.saveScreenshot('.tmp/active-meeting-overflow.png');throw Error(`Active meeting controls overflow at ${height}: ${JSON.stringify(fits)}`);}
   }
   await browser.setWindowSize(1100,800);
   await browser.waitUntil(async()=>(await command('meeting_capture_status')).elapsed>=15.2,{timeout:20000,interval:250});

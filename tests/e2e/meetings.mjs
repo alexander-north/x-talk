@@ -18,9 +18,11 @@ describe('Meetings native acceptance',()=>{
   await expect($('.import-preview')).toHaveText(expect.stringContaining('Only the first audio track'));
   await $('input[aria-label="Import meeting title"]').setValue('Project review');
   mkdirSync('.tmp',{recursive:true});await browser.saveScreenshot('.tmp/meetings-import-dialog.png');
+  await browser.execute(()=>{const input=document.querySelector('input[aria-label="Import recording date"]');input.value='2026-10-19';input.dispatchEvent(new Event('input',{bubbles:true}));});
   await $('button=Create Transcript and Brief').click();
   await expect($('.meeting-card')).toBeDisplayed();
   await browser.waitUntil(async()=>{const rows=await command('meetings_list');id=rows[0]?.id;if(!id)return false;view=await command('meeting_get',{id});return view.meeting.transcription_status==='complete';},{timeout:60000});
+  if(view.meeting.meeting_date?.value!=='2026-10-19')throw Error('Import date gained an invented time or was lost');
   if(view.meeting.source!=='video'||!view.meeting.audio_available)throw Error('Video import lost audio provenance');
   await $('button=Open recording ↗').click();
   await expect($('.meeting-summary')).toHaveText('The speakers agreed to send an updated proposal tomorrow.');
@@ -28,7 +30,7 @@ describe('Meetings native acceptance',()=>{
  it('copies full JSON from the brief, even when the transcript is filtered',async()=>{
   await $('button=Copy meeting JSON').click();
   const first=clipboard();
-  if(first.format!=='x-talk.meeting'||first.transcript.turns.length!==2||!first.brief.content)throw Error('Incomplete JSON package');
+  if(first.format!=='x-talk.meeting'||first.schema_version!==2||first.representation!=='compact'||first.transcript.turns.length!==2||!first.brief.content)throw Error('Incomplete JSON package');
   if(JSON.stringify(first).includes('fixture.invalid'))throw Error('Provider URL leaked into JSON');
   await $('button[role="tab"]=Transcript').click();
   await $('input[aria-label="Search transcript"]').setValue('will send');
@@ -263,6 +265,25 @@ describe('Meetings native acceptance',()=>{
   await $('input[aria-label="Import meeting title"]').setValue('Recorder import');
   await $('button=Create Transcript and Brief').click();
   await expect($('.meetings-page.detail-view h1')).toHaveText('Recorder import');
+ });
+
+ it('copies compact turns by default, detailed evidence on demand, and honest meeting dates',async()=>{
+  const rows=await command('meetings_list');const target=rows.find(row=>row.title==='Recorder import');
+  await browser.waitUntil(async()=>(await command('meeting_get',{id:target.id})).meeting.transcription_status==='complete',{timeout:30000});
+  await $('button[role="tab"]=Details').click();
+  await $('button=Copy detailed JSON').click();const detailed=clipboard();
+  if(detailed.representation!=='detailed'||!('original_words' in detailed.transcript.turns[0]))throw Error('Missing detailed evidence');
+  if(detailed.dates.meeting!==null)throw Error('Import silently invented a meeting date');
+  await $('button=Copy meeting JSON').click();const compact=clipboard();
+  if('original_words' in compact.transcript.turns[0]||'original_text' in compact.transcript.turns[0])throw Error('Default export contains redundant evidence');
+  if(compact.transcript.turns[0].text!==detailed.transcript.turns[0].text)throw Error('Compact export lost spoken text');
+  if(compact.brief.origin!=='ai_generated'||!compact.brief.content.summary_segment_ids.length)throw Error('Brief provenance or citations missing');
+  const current=await command('meeting_get',{id:target.id});
+  const changed=await command('meeting_edit',{id:target.id,revision:current.meeting.revision,edit:{kind:'metadata',title:target.title,call_at:'2026-10-19'}});
+  await command('meeting_copy',{id:target.id});const dated=clipboard();
+  if(dated.dates.meeting.value!=='2026-10-19'||dated.dates.meeting.timezone!==null||dated.dates.meeting.source!=='user_entered')throw Error('Date precision/provenance lost');
+  await command('meeting_edit',{id:target.id,revision:changed.meeting.revision,edit:{kind:'metadata',title:target.title,call_at:''}});
+  await command('meeting_copy',{id:target.id});if(clipboard().dates.meeting!==null)throw Error('Could not clear uncertain meeting date');
  });
 
 });

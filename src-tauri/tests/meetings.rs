@@ -80,7 +80,13 @@ fn json_preserves_originals_and_union_coverage_after_corrections_and_chained_mer
     assert_eq!(t["speakers"][0]["word_count"], 8);
     assert_eq!(t["turns"][0]["text"], "Edited \"text\"");
     assert_eq!(t["turns"][0]["original_text"], "Original words");
-    assert_eq!(t["turns"][0]["original_words"][0]["text"], "Original");
+    assert!(t["turns"][0].get("original_words").is_none());
+    let detailed: serde_json::Value =
+        serde_json::from_str(&export::json_with_detail(&m, true).unwrap()).unwrap();
+    assert_eq!(
+        detailed["transcript"]["turns"][0]["original_words"][0]["text"],
+        "Original"
+    );
     assert_eq!(t["turns"][0]["speaker_id"], "C");
     m.undo_merge().unwrap();
     assert_eq!(
@@ -104,6 +110,7 @@ fn json_preserves_originals_and_union_coverage_after_corrections_and_chained_mer
 fn brief_staleness_tracks_content_and_generation_not_metadata() {
     let mut m = fixture();
     m.brief.content = Some(BriefContent {
+        summary_segment_ids: vec![],
         title: "Title".into(),
         summary: "Summary".into(),
         topics: vec![],
@@ -199,6 +206,7 @@ fn rejects_invalid_timestamps_cycles_and_missing_brief_evidence() {
     ];
     assert!(export::json(&m).is_err());
     let brief = BriefContent {
+        summary_segment_ids: vec![],
         title: "Title".into(),
         summary: "Summary".into(),
         topics: vec![Evidence {
@@ -263,6 +271,7 @@ impl x_talk::meetings::providers::MeetingProvider for ProviderFixture {
         Ok(x_talk::meetings::providers::GeneratedBrief {
             model: Some("fixture-brief".into()),
             content: BriefContent {
+                summary_segment_ids: vec![],
                 title: "Generated title".into(),
                 summary: "A saved summary.".into(),
                 topics: vec![],
@@ -557,9 +566,10 @@ fn generated_citations_map_to_stable_ids_and_reject_invalid_references() {
         schema["properties"]["topics"]["items"]["properties"]["segment_ids"]["items"]["maximum"],
         4
     );
-    let mut response = serde_json::json!({"title":"Review","summary":"A summary","topics":[{"text":"Discussed plan","segment_ids":[1,4]}],"decisions":[],"actions":[],"open_questions":[],"suggested_follow_ups":[]});
+    let mut response = serde_json::json!({"title":"Review","summary":"A summary","summary_segment_ids":[1,4],"topics":[{"text":"Discussed plan","segment_ids":[1,4]}],"decisions":[],"actions":[],"open_questions":[],"suggested_follow_ups":[]});
     let brief = parse_generated_brief(&response.to_string(), transcript).unwrap();
     assert_eq!(brief.topics[0].segment_ids, vec!["a", "d"]);
+    assert_eq!(brief.summary_segment_ids, vec!["a", "d"]);
     for refs in [
         serde_json::json!([0]),
         serde_json::json!([5]),
@@ -642,4 +652,106 @@ fn completed_import_preserves_metadata_and_checks_duplicate_before_publication()
         )
         .is_err());
     assert!(store.get(&other.id).unwrap().audio.is_none());
+}
+
+#[test]
+fn compact_export_preserves_every_turn_and_omits_unchanged_evidence() {
+    let mut m = fixture();
+    for turn in &mut m.transcript.as_mut().unwrap().turns {
+        turn.text = "Well, I— I think maybe; actually, no. ".repeat(100);
+        turn.words = (0..700)
+            .map(|_| Word {
+                text: "evidence".into(),
+                start: Some(0.),
+                end: Some(0.1),
+                confidence: Some(0.99),
+            })
+            .collect();
+    }
+    let compact = export::json(&m).unwrap();
+    let detailed = export::json_with_detail(&m, true).unwrap();
+    assert!(compact.len() < detailed.len() / 3);
+    let a: serde_json::Value = serde_json::from_str(&compact).unwrap();
+    let b: serde_json::Value = serde_json::from_str(&detailed).unwrap();
+    assert_eq!(a["schema_version"], 2);
+    assert_eq!(a["transcript"]["generation"], b["transcript"]["generation"]);
+    assert_eq!(a["transcript"]["speakers"], b["transcript"]["speakers"]);
+    for (compact, detailed) in a["transcript"]["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(b["transcript"]["turns"].as_array().unwrap())
+    {
+        for field in ["id", "speaker_id", "start", "end", "text"] {
+            assert_eq!(compact[field], detailed[field]);
+        }
+        for field in [
+            "original_text",
+            "original_speaker_id",
+            "original_words",
+            "correction",
+            "text_changed",
+            "speaker_changed",
+        ] {
+            assert!(compact.get(field).is_none());
+        }
+    }
+    println!(
+        "Synthetic export: compact {} bytes; detailed {} bytes",
+        compact.len(),
+        detailed.len()
+    );
+}
+#[test]
+fn meeting_dates_distinguish_unknown_user_date_and_recording_clock() {
+    let mut m = fixture();
+    let parse =
+        |m: &Meeting| serde_json::from_str::<serde_json::Value>(&export::json(m).unwrap()).unwrap();
+    let unknown = parse(&m);
+    assert!(unknown.get("call_at").is_none());
+    assert!(unknown["dates"]["meeting"].is_null());
+    m.call_at = "2026-10-21T12:00:00Z".into();
+    assert_eq!(parse(&m)["dates"]["legacy_unverified_call_at"], m.call_at);
+    m.meeting_date = Some(MeetingDate::entered("2026-10-19").unwrap());
+    let date = parse(&m);
+    assert_eq!(date["dates"]["meeting"]["value"], "2026-10-19");
+    assert_eq!(date["dates"]["meeting"]["precision"], "date");
+    assert!(date["dates"]["meeting"]["timezone"].is_null());
+    assert!(MeetingDate::entered("2026-02-31").is_err());
+    assert!(MeetingDate::entered("2026-10-19T12:00:00").is_err());
+    m.meeting_date = Some(MeetingDate::recorded("2026-10-19T12:00:00-04:00").unwrap());
+    assert_eq!(parse(&m)["dates"]["meeting"]["source"], "recording_start");
+    assert_eq!(parse(&m)["dates"]["meeting"]["timezone"], "-04:00");
+    let original = m.meeting_date.as_ref().unwrap().value.clone();
+    m.set_date(&original).unwrap();
+    assert_eq!(m.meeting_date.as_ref().unwrap().source, "recording_start");
+    m.set_date("").unwrap();
+    assert!(parse(&m)["dates"]["meeting"].is_null());
+    assert!(parse(&m)["dates"]["legacy_unverified_call_at"].is_null());
+    let mut legacy = serde_json::to_value(&m).unwrap();
+    legacy.as_object_mut().unwrap().remove("meeting_date");
+    let legacy: Meeting = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.meeting_date.is_none());
+}
+#[test]
+fn new_briefs_require_summary_evidence_but_legacy_briefs_remain_readable() {
+    use x_talk::meetings::providers::parse_generated_brief;
+    let m = fixture();
+    let transcript = m.transcript.as_ref().unwrap();
+    let legacy = serde_json::json!({"title":"Review","summary":"Tentative plan","topics":[],"decisions":[],"actions":[],"open_questions":[],"suggested_follow_ups":[]});
+    assert!(serde_json::from_value::<BriefContent>(legacy.clone())
+        .unwrap()
+        .validate(transcript)
+        .is_ok());
+    assert!(parse_generated_brief(&legacy.to_string(), transcript).is_err());
+    for refs in [
+        serde_json::json!([]),
+        serde_json::json!([0]),
+        serde_json::json!([5]),
+        serde_json::json!(["a"]),
+    ] {
+        let mut invalid = legacy.clone();
+        invalid["summary_segment_ids"] = refs;
+        assert!(parse_generated_brief(&invalid.to_string(), transcript).is_err());
+    }
 }

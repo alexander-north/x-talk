@@ -236,16 +236,20 @@ async fn monitor_levels_match_saved_samples_without_monitor_files() {
     );
     let sampling = async {
         let mut peak = 0.0_f32;
+        let mut spectrum = [0.0f32; 48];
         for _ in 0..15 {
             monitor.renew();
             let state = monitor.status();
             assert!(state.error.is_none(), "{:?}", state.error);
             peak = peak.max(state.system_level);
+            for (band, value) in spectrum.iter_mut().zip(&state.spectrum) {
+                *band = band.max(*value);
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        peak
+        (peak, spectrum)
     };
-    let (played, preview_peak) = tokio::join!(playback, sampling);
+    let (played, (preview_peak, preview_spectrum)) = tokio::join!(playback, sampling);
     played.unwrap();
     assert!(preview_peak > 0.0001, "No output signal in monitor");
     // The lease must release devices if the frontend stops renewing it.
@@ -273,14 +277,24 @@ async fn monitor_levels_match_saved_samples_without_monitor_files() {
     );
     let sampling = async {
         let mut peak = 0.0_f32;
+        let mut spectrum = [0.0f32; 48];
         for _ in 0..15 {
-            peak = peak.max(session.status().system_level);
+            let state = session.status();
+            peak = peak.max(state.system_level);
+            for (band, value) in spectrum.iter_mut().zip(&state.spectrum) {
+                *band = band.max(*value);
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        peak
+        (peak, spectrum)
     };
-    let (played, recording_peak) = tokio::join!(playback, sampling);
+    let (played, (recording_peak, recording_spectrum)) = tokio::join!(playback, sampling);
     played.unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(
+        session.status().spectrum.iter().all(|band| *band == 0.),
+        "Spectrum stayed active after silence"
+    );
     let journal = session.finish().unwrap();
     let bytes = std::fs::read(
         root.path()
@@ -288,6 +302,31 @@ async fn monitor_levels_match_saved_samples_without_monitor_files() {
             .join(&journal.tracks[0].filename),
     )
     .unwrap();
+    let mut analyzer =
+        x_talk::spectrum::Spectrum::new(journal.tracks[0].rate, journal.tracks[0].channels);
+    let mut saved_spectrum = [0.0f32; 48];
+    for raw in bytes.chunks_exact(4) {
+        if let Some(bands) = analyzer.push(f32::from_le_bytes(raw.try_into().unwrap())) {
+            for (band, value) in saved_spectrum.iter_mut().zip(bands) {
+                *band = band.max(value);
+            }
+        }
+    }
+    let strongest = |bands: &[f32]| {
+        bands
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap()
+            .0
+    };
+    assert!(preview_spectrum.iter().copied().fold(0.0f32, f32::max) > 0.1);
+    assert_eq!(strongest(&preview_spectrum), strongest(&saved_spectrum));
+    assert_eq!(strongest(&recording_spectrum), strongest(&saved_spectrum));
+    println!(
+        "Matching preview/recording/saved spectrum peak band: {}",
+        strongest(&saved_spectrum)
+    );
     let saved_peak = bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes(b.try_into().unwrap()).abs())

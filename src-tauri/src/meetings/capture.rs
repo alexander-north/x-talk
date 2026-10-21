@@ -20,6 +20,7 @@ pub struct Status {
     pub system_muted: bool,
     pub microphone_level: f32,
     pub system_level: f32,
+    pub spectrum: Vec<f32>,
     pub error: Option<String>,
     pub warning: Option<String>,
 }
@@ -58,6 +59,7 @@ pub struct MonitorStatus {
     pub active: bool,
     pub microphone_level: f32,
     pub system_level: f32,
+    pub spectrum: Vec<f32>,
     pub error: Option<String>,
 }
 pub struct Monitor {
@@ -99,7 +101,15 @@ impl Monitor {
                     state.active = false;
                     state.microphone_level = 0.0;
                     state.system_level = 0.0;
-                    state.error = result.err().map(|_| "Could not monitor the selected devices. Check Windows audio settings or choose another device.".into());
+                    state.spectrum.clear();
+                    state.error = result.err().map(|error| {
+                        format!(
+                            "Could not monitor the selected devices. {}",
+                            error
+                                .message
+                                .replace(" The partial recording is preserved.", "")
+                        )
+                    });
                 }
             })?;
         Ok(Self {
@@ -441,6 +451,9 @@ mod native {
         frames: u64,
         output: Option<DiskWriter>,
         meter: PeakMeter,
+        analyzer: crate::spectrum::Spectrum,
+        spectrum: [f32; crate::spectrum::BANDS],
+        spectrum_at: f64,
         seen_packet: bool,
         discontinuities: u64,
         was_muted: bool,
@@ -531,6 +544,9 @@ mod native {
                 frames: 0,
                 output,
                 meter: PeakMeter::default(),
+                analyzer: crate::spectrum::Spectrum::new(rate, channels),
+                spectrum: [0.; crate::spectrum::BANDS],
+                spectrum_at: 0.,
                 seen_packet: false,
                 discontinuities: 0,
                 was_muted: false,
@@ -556,6 +572,13 @@ mod native {
             if self.was_muted && !muted {
                 // Discard the boundary packet: it can contain samples captured while muted.
                 self.audible_after = epoch + (elapsed * 10_000_000.0) as u64;
+            }
+            if muted {
+                self.spectrum = [0.; crate::spectrum::BANDS];
+                if !self.was_muted {
+                    self.analyzer =
+                        crate::spectrum::Spectrum::new(self.track.rate, self.track.channels);
+                }
             }
             self.was_muted = muted;
             let mut peak = 0.0f32;
@@ -634,6 +657,10 @@ mod native {
                             0.0
                         };
                         peak = peak.max(value.abs());
+                        if let Some(bands) = self.analyzer.push(value) {
+                            self.spectrum = bands;
+                            self.spectrum_at = elapsed;
+                        }
                         if let Some(output) = &mut self.output {
                             output.write_all(&value.to_le_bytes())?;
                         }
@@ -652,6 +679,9 @@ mod native {
             {
                 let through = ((elapsed - 0.5).max(0.0) * self.track.rate as f64) as u64;
                 self.zeros(through.saturating_sub(self.frames))?;
+            }
+            if elapsed - self.spectrum_at > 0.1 {
+                self.spectrum.fill(0.);
             }
             Ok(self.meter.update(peak, elapsed, muted))
         }
@@ -725,6 +755,8 @@ mod native {
                     levels.system_level = level;
                 }
             }
+            levels.spectrum =
+                crate::spectrum::combine(inputs.iter().map(|input| &input.spectrum)).to_vec();
             if let Ok(mut state) = status.lock() {
                 *state = levels;
             }
@@ -872,6 +904,11 @@ mod native {
                             state.system_level = level;
                         }
                     }
+                }
+                if let Ok(mut state) = status.lock() {
+                    state.spectrum =
+                        crate::spectrum::combine(inputs.iter().map(|input| &input.spectrum))
+                            .to_vec();
                 }
                 let glitches: u64 = inputs.iter().map(|input| input.discontinuities).sum();
                 if glitches > 0 {

@@ -128,7 +128,7 @@ pub async fn meeting_import(
     if title.as_ref().is_some_and(|t| t.len() > 500)
         || call_at
             .as_ref()
-            .is_some_and(|d| chrono::DateTime::parse_from_rfc3339(d).is_err())
+            .is_some_and(|d| MeetingDate::entered(d).is_err())
     {
         return Err(AppError::input("Enter a valid title and recording date."));
     }
@@ -172,6 +172,7 @@ pub async fn meeting_import(
         m.manual_title = true;
     }
     if let Some(date) = call_at {
+        m.meeting_date = Some(MeetingDate::entered(&date)?);
         m.call_at = date;
     }
     m.duration = Some(pending.inspection.duration);
@@ -306,13 +307,13 @@ pub async fn meeting_edit(
                     Edit::Metadata { title, call_at } => {
                         if title.trim().is_empty()
                             || title.len() > 500
-                            || chrono::DateTime::parse_from_rfc3339(&call_at).is_err()
+                            || (!call_at.is_empty() && MeetingDate::entered(&call_at).is_err())
                         {
                             return Err(AppError::input("Enter a title and valid meeting date."));
                         }
                         m.title = title.trim().into();
                         m.manual_title = true;
-                        m.call_at = call_at;
+                        m.set_date(&call_at)?;
                     }
                     Edit::Correct {
                         turn,
@@ -344,11 +345,11 @@ pub async fn meeting_edit(
     view(m)
 }
 #[tauri::command]
-pub async fn meeting_copy(app: tauri::AppHandle, id: String) -> Result<()> {
+pub async fn meeting_copy(app: tauri::AppHandle, id: String, detailed: Option<bool>) -> Result<()> {
     blocking(move || {
         let m = app.state::<AppState>().meetings.get(&id)?;
         app.clipboard()
-            .write_text(export::json(&m)?)
+            .write_text(export::json_with_detail(&m, detailed.unwrap_or(false))?)
             .map_err(|_| AppError::input("The clipboard is busy. Try Copy meeting JSON again."))
     })
     .await
@@ -720,6 +721,7 @@ pub async fn finish_capture(app: &tauri::AppHandle, discard: bool) -> Result<Opt
         let mut m = Meeting::new("Meeting recording".into(), SourceKind::Recording, None);
         m.id = id.clone();
         m.added_at = journal.created.clone();
+        m.meeting_date = Some(MeetingDate::recorded(&journal.created)?);
         m.call_at = journal.created;
         m.duration = Some(journal.elapsed);
         m.capture_warning = journal.warning;
@@ -841,6 +843,7 @@ pub fn start_worker(
                         Meeting::new("Recovered meeting".into(), SourceKind::Recording, None);
                     meeting.id = journal.id;
                     meeting.added_at = journal.created.clone();
+                    meeting.meeting_date = MeetingDate::recorded(&journal.created).ok();
                     meeting.call_at = journal.created;
                     meeting.duration = Some(journal.elapsed);
                     meeting.capture_warning = journal.warning;
