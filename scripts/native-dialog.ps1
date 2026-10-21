@@ -1,13 +1,10 @@
-param([Parameter(Mandatory=$true,ParameterSetName='Select')][string]$Path,[Parameter(Mandatory=$true,ParameterSetName='Cancel')][switch]$Cancel)
+param([Parameter(Mandatory=$true,ParameterSetName='Select')][string]$Path,[Parameter(Mandatory=$true,ParameterSetName='Cancel')][switch]$Cancel,[Parameter(Mandatory=$true,ParameterSetName='Accept')][switch]$Accept)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
 using System;using System.Text;using System.Collections.Generic;using System.Runtime.InteropServices;
 public class NativeFilePicker {
- [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
- [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  public delegate bool EnumWindow(IntPtr h,IntPtr p);
  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr h,EnumWindow cb,IntPtr p);
  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr h);
@@ -40,19 +37,7 @@ while([DateTime]::UtcNow -lt $deadline) {
    if(!$owner -or $owner.ProcessName -ne 'x-talk'){continue}
    $handle=[IntPtr]$dialog.Current.NativeWindowHandle
    if($Cancel){[NativeFilePicker]::PostMessage($handle,0x0010,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null;exit 0}
-   if($dialog.Current.Name -eq 'Save As'){
-    [NativeFilePicker]::SetForegroundWindow($handle) | Out-Null
-    if([NativeFilePicker]::GetForegroundWindow() -ne $handle){throw 'Could not focus Save As'}
-    [System.Windows.Forms.SendKeys]::SendWait('%n')
-    [System.Windows.Forms.SendKeys]::SendWait('^a')
-    $keys=''
-    foreach($character in $Path.ToCharArray()){
-     if('+^%~(){}[]'.Contains([string]$character)){$keys+='{'+$character+'}'}else{$keys+=$character}
-    }
-    [System.Windows.Forms.SendKeys]::SendWait($keys)
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-    exit 0
-   }
+   if($Accept){[NativeFilePicker]::PostMessage($handle,0x0111,[IntPtr]1,[IntPtr]::Zero) | Out-Null;exit 0}
    $edits=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit)))
    foreach($edit in $edits) {
     if($edit.Current.Name -notmatch 'File name'){continue}

@@ -355,7 +355,7 @@ pub async fn meeting_copy(app: tauri::AppHandle, id: String, detailed: Option<bo
     .await
 }
 #[tauri::command]
-pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<bool> {
+pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<Option<PathBuf>> {
     let state = app.state::<AppState>();
     let _activity = state.worker_activity.read().await;
     if state.shutting_down.load(Ordering::Acquire) {
@@ -381,7 +381,7 @@ pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<bool>
             .set_file_name(filename)
             .blocking_save_file()
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let dest = dest
             .into_path()
@@ -396,9 +396,9 @@ pub async fn meeting_download(app: tauri::AppHandle, id: String) -> Result<bool>
                     "Save audio outside xTalk's managed storage.",
                 ));
             }
-            std::fs::copy(source, dest)?;
+            std::fs::copy(source, &dest)?;
         }
-        Ok(true)
+        Ok(Some(dest))
     })
     .await
 }

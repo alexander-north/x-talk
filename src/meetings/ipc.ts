@@ -31,7 +31,7 @@ export const meetings={
  import:(token:string,title?:string,callAt?:string)=>invoke<string>('meeting_import',{token,title,callAt}),
  edit:(id:string,revision:number,edit:Edit)=>invoke<View>('meeting_edit',{id,revision,edit}),
  copy:(id:string,detailed=false)=>invoke<void>('meeting_copy',{id,detailed}),
- download:(id:string)=>invoke<boolean>('meeting_download',{id}),
+ download:(id:string)=>invoke<string|null>('meeting_download',{id}),
  delete:(id:string,revision:number)=>invoke<void>('meeting_delete',{id,revision}),
  retention:()=>invoke<number|null>('meeting_retention'),
  setRetention:(count:number|null)=>invoke<void>('meeting_set_retention',{count}),

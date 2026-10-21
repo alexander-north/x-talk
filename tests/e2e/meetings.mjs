@@ -3,7 +3,7 @@ import {browser,$,expect} from '@wdio/globals';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
-import {mkdirSync,statSync,existsSync,writeFileSync,truncateSync,unlinkSync,readdirSync} from 'node:fs';
+import {mkdirSync,statSync,existsSync,writeFileSync,truncateSync,unlinkSync} from 'node:fs';
 // Wrap valid domain objects with an error field so WebDriver does not treat them as protocol errors.
 const command=async(name,args={})=>(await browser.execute(async(n,a)=>({result:await window.__TAURI_INTERNALS__.invoke(n,a)}),name,args)).result;
 const clipboard=()=>JSON.parse(execFileSync('powershell.exe',['-NoProfile','-Command','Get-Clipboard -Raw'],{encoding:'utf8'}));
@@ -79,15 +79,22 @@ describe('Meetings native acceptance',()=>{
  it('downloads only audio and plays from a transcript timestamp',async()=>{
   await $('button[role="tab"]=Details').click();
   mkdirSync('.tmp',{recursive:true});
-  const destination=path.resolve(`.tmp/meeting-export-${Date.now()}.m4a`);
-  await browser.execute(()=>{window.__downloadMessages=[];window.__downloadObserver=new MutationObserver(()=>{const text=document.querySelector('.toast')?.textContent;if(text&&!window.__downloadMessages.includes(text))window.__downloadMessages.push(text);});window.__downloadObserver.observe(document.body,{childList:true,subtree:true,characterData:true});});
-  await $('button=Download audio').click();
-  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',destination],{timeout:40000});
-  try{await browser.waitUntil(async()=>existsSync(destination)&&statSync(destination).size>0,{timeout:15000});}catch{throw Error(`Audio download missing: messages=${JSON.stringify(await browser.execute(()=>window.__downloadMessages))}; files=${readdirSync('.tmp').filter(n=>n.startsWith('meeting-export')).join(',')}`);}
-  await browser.execute(()=>window.__downloadObserver.disconnect());
+  // The native command returns the selected path; don't assume a specific
+  // Windows shell default folder or automate a version-dependent filename field.
+  await browser.execute(id=>{
+   window.__downloadOutcome=null;
+   window.__TAURI_INTERNALS__.invoke('meeting_download',{id}).then(path=>window.__downloadOutcome={path},error=>window.__downloadOutcome={error});
+  },id);
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Accept'],{timeout:40000});
+  await browser.waitUntil(()=>browser.execute(()=>window.__downloadOutcome!==null),{timeout:15000});
+  const outcome=await browser.execute(()=>window.__downloadOutcome);
+  if(outcome.error)throw Error(JSON.stringify(outcome.error));
+  const destination=outcome.path;
+  if(!destination||path.basename(destination)!==`meeting-${id.slice(0,8)}.m4a`||!existsSync(destination)||!statSync(destination).size)throw Error('Download did not return the saved audio file');
   const packagedProbe=path.resolve(process.env.XTALK_APP_PATH?path.join(path.dirname(process.env.XTALK_APP_PATH),'binaries/ffprobe.exe'):'src-tauri/binaries/ffprobe.exe');
   const probe=JSON.parse(execFileSync(existsSync(packagedProbe)?packagedProbe:path.resolve('src-tauri/binaries/ffprobe.exe'),['-v','error','-show_entries','stream=codec_type','-of','json',destination],{encoding:'utf8'}));
   if(probe.streams.some(stream=>stream.codec_type==='video'))throw Error('Downloaded video instead of audio');
+  unlinkSync(destination);
   if(!hasAudioOutput){await unavailablePlayback(()=>command('meeting_play',{id,start:1}));return;}
   await command('meeting_play',{id,start:1});
   const playback=await command('playback_state');
