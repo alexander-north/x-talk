@@ -71,6 +71,16 @@ impl Spectrum {
         }))
     }
 }
+/// Visual union: either source can light a band without phase cancellation.
+pub fn combine<'a>(sources: impl IntoIterator<Item = &'a [f32; BANDS]>) -> [f32; BANDS] {
+    let mut bands = [0.0f32; BANDS];
+    for source in sources {
+        for (band, value) in bands.iter_mut().zip(source) {
+            *band = band.max(*value);
+        }
+    }
+    bands
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +96,16 @@ mod tests {
             }
         }
         bands
+    }
+    #[test]
+    fn meeting_sources_keep_independent_frequency_peaks() {
+        let low = tone(250.);
+        let high = tone(2000.);
+        let mixed = combine([&low, &high]);
+        for i in 0..BANDS {
+            assert_eq!(mixed[i], low[i].max(high[i]));
+        }
+        assert_eq!(combine(std::iter::empty()), [0.; BANDS]);
     }
     #[test]
     fn silence_is_quiet_and_frequency_changes_move_the_peak() {

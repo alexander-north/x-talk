@@ -103,7 +103,8 @@ impl Ffmpeg {
         channels: u16,
         start: f64,
     ) -> Result<tokio::process::Child> {
-        if !start.is_finite() || !(0. ..=MAX_SECONDS).contains(&start) {
+        // Public commands enforce their workflow limit; the shared decoder also serves meetings.
+        if !start.is_finite() || !(0. ..=crate::meetings::domain::MAX_SECONDS).contains(&start) {
             return Err(AppError::input("Invalid playback position."));
         }
         let mut c = Command::new(&self.ffmpeg);

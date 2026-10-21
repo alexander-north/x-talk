@@ -36,7 +36,8 @@ fn operation_stage(s: &AppState) -> Option<String> {
     }
 }
 fn ensure_idle(s: &AppState) -> Result<()> {
-    if operation_busy(s)?
+    if s.meeting_active.load(Ordering::Acquire)
+        || operation_busy(s)?
         || s.capture
             .state
             .lock()
@@ -163,6 +164,11 @@ pub async fn do_capture(app: &tauri::AppHandle, action: &str) -> Result<()> {
     }
     let _controls = service.controls.lock().await;
     tracing::info!(action, "capture_controls_acquired");
+    if service.meeting_active.load(Ordering::Acquire) {
+        return Err(AppError::input(
+            "A meeting is recording. Use its Stop control first.",
+        ));
+    }
     if ["start", "toggle"].contains(&action) {
         crate::app::stop_playback(app).await;
     }
@@ -178,6 +184,10 @@ pub async fn do_capture(app: &tauri::AppHandle, action: &str) -> Result<()> {
         {
             return Err(AppError::input("Application is shutting down."));
         }
+        s.meeting_monitor
+            .lock()
+            .map_err(|_| AppError::input("Audio monitor unavailable."))?
+            .take();
         let active = s
             .capture
             .state
@@ -791,6 +801,9 @@ pub async fn play_audio(
         ));
     }
     let _controls = service.controls.lock().await;
+    if service.meeting_active.load(Ordering::Acquire) {
+        return Err(AppError::input("Stop the meeting before playing audio."));
+    }
     if service.shutting_down.load(Ordering::Acquire) {
         return Err(AppError::input("Application is shutting down."));
     }
@@ -994,6 +1007,13 @@ pub async fn quit(app: tauri::AppHandle, discard_capture: bool) -> Result<()> {
     crate::app::stop_playback(&app).await;
     tracing::info!("shutdown_playback_stop_completed");
     tracing::info!("shutdown_capture_stop_started");
+    if s.meeting_active.load(Ordering::Acquire) {
+        if let Err(e) = crate::meetings::commands::meeting_stop(app.clone(), discard_capture).await
+        {
+            s.shutting_down.store(false, Ordering::Release);
+            return Err(e);
+        }
+    }
     let stopped = tokio::time::timeout(
         std::time::Duration::from_secs(8),
         do_capture(&app, if discard_capture { "cancel" } else { "stop" }),

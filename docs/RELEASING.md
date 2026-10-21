@@ -50,6 +50,8 @@ The five version files are `package.json`, `package-lock.json` (root and root-pa
 
 `C:\temp` is accessible from WSL as `/mnt/c/temp`. Copying a verified installer there is a manual convenience for local acceptance, not a deployment step. Future main pushes publish to GitHub; they do **not** copy files to this machine. Keep the release filename unchanged so the version is visible. Installing is a separate action; do not silently replace an owner’s running app while preparing artifacts.
 
+The Meetings media bundle includes audio decoding for AAC, MP3, FLAC, Opus, Vorbis, ALAC and supported PCM, with MP4/MOV, Matroska/WebM and Ogg demuxing. Video is read only to extract its first audio stream; no video decoder or network protocol is enabled. Rebuild from the pinned recipe and update checksums/notices together when changing these capabilities.
+
 ## Signing and recovery
 
 The updater's public key is committed in tauri.conf.json. Its private key belongs in the repository Actions secret `TAURI_SIGNING_PRIVATE_KEY`; the current key has an empty password. Keep a protected backup outside Git. Never log or commit it. Losing this key prevents existing installations from trusting newly signed updates; distribute a manual installer if recovery is necessary. Rotate keys deliberately, with an upgrade path for installed clients.

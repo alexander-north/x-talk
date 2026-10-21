@@ -13,6 +13,61 @@ pub fn enabled() -> bool {
 }
 pub struct TestProviders;
 #[async_trait]
+impl crate::meetings::providers::MeetingProvider for TestProviders {
+    fn check_key(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(&self, _: &Path) -> Result<String> {
+        Ok("https://fixture.invalid/audio".into())
+    }
+    async fn submit(&self, _: &str) -> Result<String> {
+        Ok("fixture-meeting".into())
+    }
+    async fn poll(&self, _: &str) -> Result<crate::meetings::providers::Poll> {
+        let raw = serde_json::json!({"speech_model_used":"acceptance-fixture","utterances":[
+            {"speaker":"A","start":0,"end":1000,"text":"Let's send the updated proposal tomorrow.","words":[]},
+            {"speaker":"B","start":1000,"end":2000,"text":"Agreed. I will send it.","words":[]}
+        ]});
+        Ok(crate::meetings::providers::Poll::Complete(
+            crate::meetings::providers::normalize(&raw)?,
+        ))
+    }
+    async fn brief(
+        &self,
+        meeting: &crate::meetings::domain::Meeting,
+    ) -> Result<crate::meetings::providers::GeneratedBrief> {
+        use crate::meetings::domain::*;
+        Ok(crate::meetings::providers::GeneratedBrief {
+            model: Some("fixture-brief".into()),
+            content: BriefContent {
+                summary_segment_ids: meeting
+                    .transcript
+                    .as_ref()
+                    .map(|t| t.turns.iter().take(2).map(|t| t.id.clone()).collect())
+                    .unwrap_or_default(),
+                title: "Updated proposal and next steps".into(),
+                summary: "The speakers agreed to send an updated proposal tomorrow.".into(),
+                topics: vec![Evidence {
+                    text: "Updated proposal".into(),
+                    segment_ids: vec!["seg_1".into()],
+                }],
+                decisions: vec![Evidence {
+                    text: "Send the updated proposal.".into(),
+                    segment_ids: vec!["seg_1".into(), "seg_2".into()],
+                }],
+                actions: vec![ActionItem {
+                    text: "Send the proposal".into(),
+                    segment_ids: vec!["seg_2".into()],
+                    owner: Some("Speaker B".into()),
+                    due: Some("tomorrow".into()),
+                }],
+                open_questions: vec![],
+                suggested_follow_ups: vec!["Who should receive the proposal?".into()],
+            },
+        })
+    }
+}
+#[async_trait]
 impl crate::realtime::StreamingProvider for TestProviders {
     async fn stream(
         &self,

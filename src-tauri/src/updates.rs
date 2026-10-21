@@ -125,7 +125,12 @@ pub async fn install_update(app: tauri::AppHandle, confirmed: bool) -> Result<()
             .lock()
             .map_err(|_| failure("Recording state is unavailable."))?
             .active;
-        if active || state.store.update_busy()? || state.test.lock().unwrap().is_some() {
+        if active
+            || state.meeting_active.load(Ordering::Acquire)
+            || state.meetings.update_busy()?
+            || state.store.update_busy()?
+            || state.test.lock().unwrap().is_some()
+        {
             return Err(failure(
                 "Finish recording, processing, imports, and audio playback/export before updating.",
             ));

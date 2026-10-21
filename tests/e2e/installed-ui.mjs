@@ -24,7 +24,7 @@ describe('Installed release workspace',()=>{
   await expect($('button[aria-label="Start recording"]')).toExist();await expect($('header')).not.toExist();await expect($('footer')).not.toExist();
  });
  it('opens the persisted recordings table and executes its native full-library query',async()=>{
-  await $('button[aria-label="Recordings"]').click();await expect($('.recordings-table')).toExist();
+  await $('button[aria-label="Transcripts"]').click();await expect($('.recordings-table')).toExist();
   const result=await command('recordings',{query:{search:'',sort:'created',descending:true,offset:0}});
   if(!Array.isArray(result.entries)||typeof result.total!=='number')throw new Error('Recordings query failed');
   await expect($('input[aria-label="Search recordings"]')).toExist();await expect($('summary')).toHaveText('Columns');

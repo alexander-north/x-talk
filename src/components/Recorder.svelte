@@ -8,7 +8,7 @@
  import {duration,elapsedTime} from '../ipc';
  import Icon from './Icon.svelte';
  import {tailText} from '../tail-text';
- let {snapshot,entry,elapsed,captureBusy,busy,compact,spectrum=[],control,copy,importAudio}: {snapshot:AppState;entry:Entry|null;elapsed:number;captureBusy:boolean;busy:boolean;compact:boolean;spectrum?:number[];control:(action:string)=>Promise<void>;copy:(id:string,kind:string)=>Promise<boolean>;importAudio:()=>void}=$props();
+ let {snapshot,entry,elapsed,captureBusy,busy,compact,spectrum=[],control,copy}: {snapshot:AppState;entry:Entry|null;elapsed:number;captureBusy:boolean;busy:boolean;compact:boolean;spectrum?:number[];control:(action:string)=>Promise<void>;copy:(id:string,kind:string)=>Promise<boolean>}=$props();
  let active=$derived(snapshot.capture.active);
  let finalizing=$derived(!!snapshot.capture.finalizing);
  let live=$derived(active?snapshot.capture.live:null);
@@ -82,7 +82,7 @@
    <div class="text-heading"><h2><Icon name="mic" size={15}/>{live?'Live preview':'Transcript'}{#if latest?.transcription_ms!=null}<span class="output-timing" title={latest?.transcript_model?.includes('scribe_v2_realtime')?'Time from Stop until the final transcript returned':'Transcription time, excluding queue and audio preparation'}>– {elapsedTime(latest.transcription_ms)}</span>{/if}</h2>{#if transcriptRear}<span class="card-hint">Click to view <Icon name="arrow" size={12}/></span>{:else}<span class="card-copy-hint" aria-hidden="true"><Icon name={copied===`${latest?.id}:transcript`?'check':'copy'} size={17}/></span>{/if}</div>
    <div class="output home-output" aria-label="Transcript output" inert={transcriptRear} class:placeholder={!output} use:tailText={live?(output||'Listening… Your preview may change.'):(latest?.transcript??'Your words will appear here after recording.')}></div>
   </section>
-  {#if live}<p class="help" role="status">{finalizing?'Confirming final text…':live.error?live.error.message:live.status==='connecting'?'Connecting to ElevenLabs… Audio is being recorded locally.':'Live preview · Text is finalized after Stop.'}</p>{/if}
+  {#if live}<p class="help live-preview-note" role="status">{finalizing?'Confirming final text…':live.error?live.error.message:live.status==='connecting'?'Connecting to ElevenLabs… Audio is being recorded locally.':'Live preview · Text is finalized after Stop.'}</p>{/if}
   {#if stacked}
    <section transition:fade={{duration:prefersReducedMotion.current?0:550}} class="output-card transformed-card" class:card-front={front==='transformed'} class:card-rear={transformedRear} aria-label="Transformed output card">
     <button bind:this={transformedBox} class="card-reveal card-action" aria-label={transformedRear?'Show transformed output':'Copy transformed output'} onclick={()=>transformedRear?show('transformed'):copyCard('transformed')}></button>
@@ -92,5 +92,5 @@
   {/if}
   <span class="visually-hidden" role="status">{copied?'Copied':''}</span>
  </div>{/if}
- <div class="recorder-footer">{#if !compact}<button class="import-footer" disabled={busy||snapshot.operation_busy||active} onclick={importAudio}><Icon name="upload" size={13}/>Import audio</button>{/if}<div class="shortcut-hints">{#if snapshot.settings.shortcuts.toggle}<span><kbd>{snapshot.settings.shortcuts.toggle}</kbd> record / stop</span>{/if}{#if snapshot.settings.shortcuts.cancel}<span><kbd>{snapshot.settings.shortcuts.cancel}</kbd> cancel</span>{/if}</div></div>
+
 </main>
