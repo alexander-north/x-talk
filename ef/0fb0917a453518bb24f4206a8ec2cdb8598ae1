@@ -1,0 +1,85 @@
+src/meetings/levels.test.ts
+  s_b7d8957ea62ed3::t_6cad97a645322c 1-9
+src-tauri/tests/meeting_capture.rs
+  s_b7d8957ea62ed3::t_75ea9841dc0880 195-304
+  s_b7d8957ea62ed3::t_3c4ae5f883bb08 156-183
+src-tauri/src/commands.rs
+  s_b7d8957ea62ed3::t_6cad97a645322c 187-190
+tests/e2e/meetings.mjs
+  s_b7d8957ea62ed3::t_56786bcb4c544c 243-244,246
+  s_b7d8957ea62ed3::t_75ea9841dc0880 217-242,247-250
+  s_b7d8957ea62ed3::t_1ec45d6a373ebf 245
+package.json
+  s_b7d8957ea62ed3::t_b603cb0fff7048 3
+docs/AGENT_WORKFLOW.md
+  s_b7d8957ea62ed3::t_1ec45d6a373ebf 135
+src-tauri/src/meetings/capture.rs
+  s_b7d8957ea62ed3::t_548279795fac5c 26,33-34,40-41,46-48,51-74,115,124-127,131-133,409-410,426,500,516,623,629-631,643,647-648,666,671-672,687-688,694,698-700,734,742,889-903
+  s_b7d8957ea62ed3::t_b603cb0fff7048 102
+  s_b7d8957ea62ed3::t_6cad97a645322c 35-39,42-45,49-50,75-101,103-114,116-123,128-130,484-486,508-511,604-606,626-628,632-642,644-646,649-664,667-670,673-686,689-693,695-697,854-855,857-858,872
+  s_b7d8957ea62ed3::t_90270ec7269301 856,859-871
+src/meetings/ipc.ts
+  s_b7d8957ea62ed3::t_df50a66077d4a8 5,20
+src/glass.css
+  s_b7d8957ea62ed3::t_1ec45d6a373ebf 89-91,94-102,104-107
+  s_b7d8957ea62ed3::t_812f52604da51a 92-93,103
+  s_b7d8957ea62ed3::t_75ec56b52a747c 108
+src-tauri/tauri.conf.json
+  s_b7d8957ea62ed3::t_b603cb0fff7048 4
+SPEC.md
+  s_b7d8957ea62ed3::t_9df180de37f924 67-69
+  s_b7d8957ea62ed3::t_c4017b27d41d61 65-66,70-71
+docs/RELEASE_NOTES.md
+  s_b7d8957ea62ed3::t_c4017b27d41d61 1-4
+src/components/meetings/MeetingCapture.svelte
+  s_b7d8957ea62ed3::t_a2af748a8d5db7 48,54
+  s_b7d8957ea62ed3::t_6cad97a645322c 3,8,12-14,21-26,28-34,44,46-47
+  s_b7d8957ea62ed3::t_c4017b27d41d61 62
+tests/e2e/glass.mjs
+  s_b7d8957ea62ed3::t_75ec56b52a747c 64
+src/components/Pagination.svelte
+  s_b7d8957ea62ed3::t_df50a66077d4a8 1-5
+tests/e2e/meeting-recording.mjs
+  s_b7d8957ea62ed3::t_a2af748a8d5db7 39-40
+  s_b7d8957ea62ed3::t_56786bcb4c544c 37-38,41-42
+  s_b7d8957ea62ed3::t_75ea9841dc0880 20-28,30-31
+src-tauri/src/meetings/commands.rs
+  s_b7d8957ea62ed3::t_6cad97a645322c 536-539,545-562,565-571,573-576,583-584,612-617,619-620
+  s_b7d8957ea62ed3::t_df50a66077d4a8 534,540-544,563-564,572,577-582,585-586,610-611,618
+  s_b7d8957ea62ed3::t_1308a8645aaf5b 535
+src/meetings/levels.ts
+  s_b7d8957ea62ed3::t_df50a66077d4a8 1-5
+src-tauri/Cargo.toml
+  s_b7d8957ea62ed3::t_b603cb0fff7048 3
+src/components/LevelMeter.svelte
+  s_b7d8957ea62ed3::t_df50a66077d4a8 1-9,11
+  s_b7d8957ea62ed3::t_c4017b27d41d61 10
+src-tauri/src/app.rs
+  s_b7d8957ea62ed3::t_df50a66077d4a8 28,417,573
+src/components/meetings/Meetings.svelte
+  s_b7d8957ea62ed3::t_df50a66077d4a8 6,15-16,62,64,73
+src/components/RecordingsTable.svelte
+  s_b7d8957ea62ed3::t_df50a66077d4a8 2,50
+src-tauri/permissions/application.toml
+  s_b7d8957ea62ed3::t_df50a66077d4a8 4
+package-lock.json
+  s_b7d8957ea62ed3::t_f20ee2a46b9a00 3,9
+src-tauri/Cargo.lock
+  s_b7d8957ea62ed3::t_3da33a7a332464 6292
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef0fb0917a453518bb24f4206a8ec2cdb8598ae1",
+  "prompts": {},
+  "sessions": {
+    "s_b7d8957ea62ed3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15a03-03df-7710-aa8f-98fb20398b0d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
