@@ -3,14 +3,22 @@ import {browser,$,expect} from '@wdio/globals';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
-import {mkdirSync,statSync,existsSync,writeFileSync,truncateSync,unlinkSync} from 'node:fs';
+import {mkdirSync,statSync,existsSync,writeFileSync,truncateSync,unlinkSync,readdirSync} from 'node:fs';
 // Wrap valid domain objects with an error field so WebDriver does not treat them as protocol errors.
 const command=async(name,args={})=>(await browser.execute(async(n,a)=>({result:await window.__TAURI_INTERNALS__.invoke(n,a)}),name,args)).result;
 const clipboard=()=>JSON.parse(execFileSync('powershell.exe',['-NoProfile','-Command','Get-Clipboard -Raw'],{encoding:'utf8'}));
-let id,view;
+let id,view,hasAudioOutput;
+async function unavailablePlayback(start){
+ const dismiss=$('button[aria-label="Dismiss notification"]');if(await dismiss.isExisting())await dismiss.click();
+ await start();
+ await expect($('.toast')).toHaveText(expect.stringContaining('No output device is available.'));
+ await browser.waitUntil(async()=>(await command('playback_state'))===null);
+}
 describe('Meetings native acceptance',()=>{
  it('imports video through the picker with an explicit first-track notice',async()=>{
   const state=await command('state');if(!state.test_providers)throw Error('Requires isolated test providers');
+  hasAudioOutput=(await command('meeting_devices')).outputs.length>0;
+  console.log(`Meeting playback coverage: ${hasAudioOutput?'real output device':'explicit no-output error path'}`);
   await $('button[aria-label="Meetings"]').click();
   await $('button=Import recording').click();
   await $('.drop-zone').click();
@@ -65,9 +73,11 @@ describe('Meetings native acceptance',()=>{
   const destination=path.resolve(`.tmp/meeting-export-${Date.now()}.m4a`);
   await $('button=Download audio').click();
   execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',destination],{timeout:40000});
-  await browser.waitUntil(async()=>existsSync(destination)&&statSync(destination).size>0,{timeout:15000});
-  const probe=JSON.parse(execFileSync(path.resolve('src-tauri/binaries/ffprobe.exe'),['-v','error','-show_entries','stream=codec_type','-of','json',destination],{encoding:'utf8'}));
+  try{await browser.waitUntil(async()=>existsSync(destination)&&statSync(destination).size>0,{timeout:15000});}catch{throw Error(`Audio download missing: toast=${await $('.toast').getText().catch(()=>'(none)')}; files=${readdirSync('.tmp').filter(n=>n.startsWith('meeting-export')).join(',')}`);}
+  const packagedProbe=path.resolve(process.env.XTALK_APP_PATH?path.join(path.dirname(process.env.XTALK_APP_PATH),'binaries/ffprobe.exe'):'src-tauri/binaries/ffprobe.exe');
+  const probe=JSON.parse(execFileSync(existsSync(packagedProbe)?packagedProbe:path.resolve('src-tauri/binaries/ffprobe.exe'),['-v','error','-show_entries','stream=codec_type','-of','json',destination],{encoding:'utf8'}));
   if(probe.streams.some(stream=>stream.codec_type==='video'))throw Error('Downloaded video instead of audio');
+  if(!hasAudioOutput){await unavailablePlayback(()=>command('meeting_play',{id,start:1}));return;}
   await command('meeting_play',{id,start:1});
   const playback=await command('playback_state');
   if(playback?.id!==`meeting:${id}`)throw Error('Meeting playback was not admitted');
@@ -75,12 +85,14 @@ describe('Meetings native acceptance',()=>{
  });
  it('uses the shared player, toast feedback and returns from other views to all meetings',async()=>{
   await $('button[role="tab"]=Details').click();
+  if(hasAudioOutput){
   await $('.meeting-audio button[aria-label="Play audio"]').click();
   await $('.meeting-audio button[aria-label="Pause audio"]').click();
   await browser.waitUntil(async()=>(await command('playback_state'))?.paused===true,{timeout:5000});
   await browser.execute(()=>{const input=document.querySelector('.meeting-audio input');input.value='1';input.dispatchEvent(new Event('change',{bubbles:true}));});
   await browser.waitUntil(async()=>{const p=await command('playback_state');return p?.paused&&Math.abs(p.position-1)<0.2;},{timeout:5000});
   await command('stop_playback');
+  }else await unavailablePlayback(()=>$('.meeting-audio button[aria-label="Play audio"]').click());
   await $('button[role="tab"]=Manage speakers').click();
   await $('.speaker-row:first-of-type button').click();
   await expect($('.toast')).toHaveText(expect.stringContaining('Saved'));
@@ -135,11 +147,13 @@ describe('Meetings native acceptance',()=>{
   if(!rejected||(await command('meeting_get',{id})).meeting.revision!==revision)throw Error('Invalid rename partially saved the correction');
   await $('#turn-seg_1').$('button=Restore original turn').click();
   await $('#turn-seg_1 .meeting-card-heading > button').waitForEnabled();
+  if(hasAudioOutput){
   await $('#turn-seg_1 .meeting-card-heading > button').click();
   await expect($('.meeting-audio button[aria-label="Pause audio"]')).toBeDisplayed();
   await $('.meeting-audio button[aria-label="Pause audio"]').click();
   if(!(await command('playback_state'))?.paused)throw Error('Timestamp playback could not be paused from the shared toolbar');
   await command('stop_playback');
+  }else await unavailablePlayback(()=>$('#turn-seg_1 .meeting-card-heading > button').click());
   for(const tab of ['Transcript','Meeting brief']){
    await $(`button[role="tab"]=${tab}`).click();
    const result=await browser.execute(()=>{
