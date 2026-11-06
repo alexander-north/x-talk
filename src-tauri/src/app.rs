@@ -111,15 +111,11 @@ impl CaptureFeedback for DesktopFeedback {
                 s.cues.submit(e, false, None);
             }
         }
-        let active = e == "started";
-        if let Some(tray) = self.app.tray_by_id("main") {
-            let _ = tray.set_icon(Some(tray_image(active)));
-            let _ = tray.set_tooltip(Some(if active {
-                "x-talk · Recording"
-            } else {
-                "x-talk · Ready"
-            }));
-        }
+        let meeting = self
+            .app
+            .try_state::<AppState>()
+            .is_some_and(|s| s.meeting_active.load(Ordering::Acquire));
+        recording_indicator(&self.app, e == "started", meeting);
     }
     fn queued(&self) {
         self.wake.notify_one();
@@ -148,6 +144,39 @@ pub fn configuration_changed(app: &tauri::AppHandle) {
 pub fn changed(app: &tauri::AppHandle) {
     let _ = app.emit("state-changed", ());
 }
+pub(crate) fn recording_indicator(app: &tauri::AppHandle, dictation: bool, meeting: bool) {
+    let active = dictation || meeting;
+    let label = if meeting {
+        "Recording meeting"
+    } else if dictation {
+        "Recording"
+    } else {
+        "Ready"
+    };
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_icon(Some(tray_image(active)));
+        let _ = tray.set_tooltip(Some(format!("x-talk · {label}")));
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let base = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|w| w.label == "main")
+            .map(|w| w.title.as_str())
+            .unwrap_or("x-talk");
+        let title = if active {
+            format!("{base} · {label}")
+        } else {
+            base.to_owned()
+        };
+        let _ = window.set_title(&title);
+        let _ = window.set_icon(tray_image(active));
+        #[cfg(target_os = "windows")]
+        let _ = window.set_overlay_icon(active.then(|| tray_image(true)));
+    }
+}
 pub(crate) fn tray_image(active: bool) -> tauri::image::Image<'static> {
     if !active {
         return tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
@@ -160,7 +189,7 @@ pub(crate) fn tray_image(active: bool) -> tauri::image::Image<'static> {
             let inside = (x as i32 - 16).pow(2) + (y as i32 - 16).pow(2) < 170;
             if inside {
                 data[idx..idx + 4].copy_from_slice(if active {
-                    &[240, 75, 87, 255]
+                    &[255, 145, 32, 255]
                 } else {
                     &[75, 197, 153, 255]
                 });
