@@ -23,7 +23,11 @@ pub struct LivePreview {
     pub error: Option<AppError>,
 }
 pub fn failure(category: &str, message: &str) -> AppError {
-    AppError::new("transcribing", category, message)
+    AppError::new(
+        "transcribing",
+        category,
+        format!("Transcription · ElevenLabs (real-time) — {message}"),
+    )
 }
 
 #[async_trait]
@@ -176,7 +180,16 @@ pub fn supported_rate(rate: u32) -> bool {
     matches!(rate, 8000 | 16000 | 22050 | 24000 | 44100 | 48000)
 }
 
-fn transport(_: tokio_tungstenite::tungstenite::Error) -> AppError {
+fn transport(error: tokio_tungstenite::tungstenite::Error) -> AppError {
+    if let tokio_tungstenite::tungstenite::Error::Http(response) = error {
+        return crate::providers::http_failure(
+            "ElevenLabs (real-time)",
+            "transcribing",
+            response.status(),
+            &[],
+            &[],
+        );
+    }
     failure("transport", "Real-time connection failed. Check the connection and API key, then retry from Recordings. Original audio is retained.")
 }
 fn frame(samples: &[i16], rate: u32, commit: bool) -> Message {
@@ -206,7 +219,9 @@ impl Transcript {
                 Ok(true)
             }
             "session_started" | "warning" => Ok(false),
-            // Never echo provider errors, which can contain credentials or transcript text.
+            "quota_exceeded" | "insufficient_credits" => Err(failure("quota", "Provider reported exhausted credits/quota. Check ElevenLabs account credits, billing and usage limits; retry from the saved recording.")),
+            "auth_error" => Err(failure("authentication", "Provider reported auth_error. Check your ElevenLabs API key, account credits/billing and access; retry from the saved recording.")),
+            // Unknown events may contain credentials or transcript text.
             _ => Err(failure("stream_provider", "Real-time transcription was interrupted by the provider. Check your key, quota and connection; retry from the saved recording.")),
         }
     }
@@ -362,6 +377,22 @@ mod tests {
             )
             .unwrap_err();
         assert!(!error.message.contains("secret"));
+        assert_eq!(error.category, "authentication");
+        assert!(error.message.contains("Transcription · ElevenLabs"));
+        let error = text
+            .update(&json!({"message_type":"quota_exceeded"}), false)
+            .unwrap_err();
+        assert_eq!(error.category, "quota");
+        assert!(error.message.contains("credits"));
+        let response = tokio_tungstenite::tungstenite::http::Response::builder()
+            .status(401)
+            .body(None)
+            .unwrap();
+        let error = transport(tokio_tungstenite::tungstenite::Error::Http(Box::new(
+            response,
+        )));
+        assert!(error.message.contains("ElevenLabs (real-time)"));
+        assert!(error.message.contains("401 Unauthorized"));
         assert!(text
             .update(
                 &json!({"message_type":"partial_transcript","text":42}),

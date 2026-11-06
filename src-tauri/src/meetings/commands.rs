@@ -37,23 +37,19 @@ fn view(m: Meeting) -> Result<View> {
 }
 pub fn changed(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
-        let meeting = state.meeting_active.load(Ordering::Acquire);
+        let meeting = state
+            .meeting_capture
+            .lock()
+            .ok()
+            .and_then(|session| session.as_ref().map(|session| session.status().active))
+            .unwrap_or(false);
         let dictation = state
             .capture
             .state
             .lock()
             .map(|s| s.active)
             .unwrap_or(false);
-        if let Some(tray) = app.tray_by_id("main") {
-            let _ = tray.set_icon(Some(crate::app::tray_image(meeting || dictation)));
-            let _ = tray.set_tooltip(Some(if meeting {
-                "x-talk · Recording meeting"
-            } else if dictation {
-                "x-talk · Recording"
-            } else {
-                "x-talk · Ready"
-            }));
-        }
+        crate::app::recording_indicator(app, dictation, meeting);
     }
     let _ = app.emit("meetings-changed", ());
 }
@@ -626,12 +622,34 @@ pub async fn meeting_start(app: tauri::AppHandle, options: super::capture::Optio
     .await;
     match result {
         Ok(session) => {
+            let capture_id = session.status().id;
             *state
                 .meeting_capture
                 .lock()
                 .map_err(|_| AppError::input("Capture unavailable."))? =
                 Some(std::sync::Arc::new(session));
             changed(&app);
+            // Capture can end on a device fault or duration limit while the UI is hidden.
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    let state = handle.state::<AppState>();
+                    let status = state
+                        .meeting_capture
+                        .lock()
+                        .ok()
+                        .and_then(|session| session.as_ref().map(|session| session.status()));
+                    match status {
+                        Some(status) if status.id == capture_id && status.active => {}
+                        Some(status) if status.id == capture_id => {
+                            changed(&handle);
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            });
             Ok(())
         }
         Err(error) => {
@@ -710,6 +728,7 @@ pub async fn finish_capture(app: &tauri::AppHandle, discard: bool) -> Result<Opt
         blocking(move || crate::storage::publish_journal(&path, b"discard")).await?;
     }
     let finished = blocking(move || session.finish()).await;
+    changed(app);
     let failure = finished.as_ref().err().cloned();
     let result: Result<Option<String>> = async {
         if discard {

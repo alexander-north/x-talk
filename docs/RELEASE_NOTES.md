@@ -1,3 +1,7 @@
+# Recording indicators and clearer provider errors
+
+Dictation and meeting recordings now show an orange Windows taskbar/tray icon and a Recording window title. The normal appearance returns when capture ends. Provider HTTP errors identify the provider, transcription or transformation stage, status, and available error detail, with guidance for exhausted credits and account access.
+
 # Meeting capture recovery
 
 Save or discard a meeting normally after a device failure or the recording duration limit. Repeated playback failures each display their own error toast. Canceling an audio download does not report it as saved.

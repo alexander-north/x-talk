@@ -6,6 +6,110 @@ use reqwest::{
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
+fn provider_name(host: &str) -> &str {
+    match host {
+        "api.elevenlabs.io" => "ElevenLabs",
+        "api.openai.com" => "OpenAI",
+        "api.anthropic.com" => "Anthropic",
+        "api.deepgram.com" => "Deepgram",
+        "api.assemblyai.com" => "AssemblyAI",
+        _ => "Provider",
+    }
+}
+fn operation(stage: &str) -> &str {
+    match stage {
+        "transcribing" => "Transcription",
+        "transforming" => "Transformation",
+        "meeting_upload" => "Meeting audio upload",
+        "meeting_transcription" | "meeting_poll" => "Meeting transcription",
+        "meeting_brief" => "Meeting brief transformation",
+        _ => stage,
+    }
+}
+// Only structured error fields reach the UI; never dump response bodies or log them.
+pub(crate) fn http_failure(
+    provider: &str,
+    stage: &str,
+    status: reqwest::StatusCode,
+    body: &[u8],
+    secrets: &[String],
+) -> AppError {
+    let value: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let detail = value
+        .get("detail")
+        .or_else(|| value.get("error"))
+        .unwrap_or(&value);
+    let code = detail
+        .get("code")
+        .or_else(|| detail.get("status"))
+        .or_else(|| detail.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let message = detail
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| detail.as_str())
+        .or_else(|| value.get("err_msg").and_then(Value::as_str))
+        .unwrap_or("");
+    let quota = matches!(
+        code,
+        "quota_exceeded" | "insufficient_quota" | "insufficient_credits" | "credit_balance_too_low"
+    );
+    let (category, advice) = if quota {
+        (
+            "quota",
+            "Check your account credits, billing and usage limits before retrying.",
+        )
+    } else {
+        match status.as_u16() {
+            401 | 403 => (
+                "authentication",
+                "Check the API key, account credits/billing and model access.",
+            ),
+            402 => (
+                "quota",
+                "Check your account credits and billing before retrying.",
+            ),
+            413 => ("size", "Enable compression and retry."),
+            429 => (
+                "rate_limit",
+                "Check account quota and rate limits before retrying.",
+            ),
+            400 | 404 | 422 => ("unsupported_request", "Verify the model and parameters."),
+            500..=599 => (
+                "provider_unavailable",
+                "The provider is temporarily unavailable; billing outcome may be unknown.",
+            ),
+            _ => ("provider_error", "Review settings before retrying."),
+        }
+    };
+    let mut detail = [code, message]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(": ");
+    for secret in secrets.iter().filter(|s| !s.is_empty()) {
+        detail = detail.replace(secret, "[redacted]");
+    }
+    let detail: String = detail
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(600)
+        .collect();
+    let detail = if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" {detail}.")
+    };
+    AppError::new(
+        stage,
+        category,
+        format!(
+            "{} · {provider} — HTTP {status}.{detail} {advice}",
+            operation(stage)
+        ),
+    )
+}
 #[async_trait]
 pub trait TranscriptionProvider: Send + Sync {
     async fn transcribe(
@@ -49,13 +153,25 @@ impl Providers {
         limit: usize,
     ) -> Result<Value> {
         tracing::info!(stage, "provider_request_started");
-        let mut response=req.send().await.map_err(|e| {
-tracing::warn!(stage, timeout = e.is_timeout(), "provider_transport_failed");
-AppError::new(stage,if e.is_timeout(){
-"timeout"}
-else{
-"transport"}
-,"Provider request did not complete. Its billing outcome may be unknown; review history before retrying.")})?;
+        let request = req
+            .build()
+            .map_err(|_| AppError::new(stage, "request", "Could not prepare provider request."))?;
+        let provider = provider_name(request.url().host_str().unwrap_or("")).to_owned();
+        let secrets: Vec<String> = ["authorization", "xi-api-key", "x-api-key"]
+            .iter()
+            .filter_map(|name| request.headers().get(*name).and_then(|v| v.to_str().ok()))
+            .map(|v| {
+                v.strip_prefix("Bearer ")
+                    .or_else(|| v.strip_prefix("Token "))
+                    .unwrap_or(v)
+                    .to_owned()
+            })
+            .collect();
+        let mut response = self.client.execute(request).await.map_err(|e| {
+            tracing::warn!(stage, timeout = e.is_timeout(), "provider_transport_failed");
+            AppError::new(stage, if e.is_timeout() { "timeout" } else { "transport" },
+                format!("{} · {provider} — Request did not complete. Its billing outcome may be unknown; review history before retrying.", operation(stage)))
+        })?;
         let status = response.status();
         let request_id = response
             .headers()
@@ -75,10 +191,16 @@ else{
             "provider_response"
         );
         if !status.is_success() {
-            let(category,message)=match status.as_u16(){
-401|403=>("authentication","Provider rejected the API key or account access. Replace the key or check model access."),413=>("size","Provider rejected upload size. Enable compression and retry."),429=>("rate_limit","Provider rate limit reached. Wait before retrying."),400|404|422=>("unsupported_request","Provider rejected the model or parameters. Verify model access and update x-talk if necessary."),500..=599=>("provider_unavailable","Provider is temporarily unavailable. Retry later; billing outcome may be unknown."),_=>("provider_error","Provider request failed. Review settings before retrying.")}
-;
-            return Err(AppError::new(stage, category, message));
+            let mut body = Vec::new();
+            // A failed/oversized error body must not hide the HTTP status.
+            while let Ok(Some(chunk)) = response.chunk().await {
+                if body.len() + chunk.len() > 16 * 1024 {
+                    body.clear();
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            return Err(http_failure(&provider, stage, status, &body, &secrets));
         }
         let mut data = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|_| {
@@ -600,6 +722,45 @@ mod transport_tests {
             socket.write_all(response.as_bytes()).await.unwrap();
         });
         format!("http://{address}")
+    }
+    #[test]
+    fn identifies_credit_failure_and_redacts_key() {
+        let error = http_failure("ElevenLabs", "transcribing", reqwest::StatusCode::UNAUTHORIZED,
+            br#"{"detail":{"status":"quota_exceeded","message":"Insufficient credits for key test-key"}}"#,
+            &["test-key".into()]);
+        assert_eq!(error.category, "quota");
+        for expected in [
+            "Transcription",
+            "ElevenLabs",
+            "401 Unauthorized",
+            "quota_exceeded",
+            "Insufficient credits",
+            "[redacted]",
+        ] {
+            assert!(error.message.contains(expected), "{}", error.message);
+        }
+        assert!(!error.message.contains("test-key"));
+        let error = http_failure(
+            "Anthropic",
+            "transforming",
+            reqwest::StatusCode::FORBIDDEN,
+            br#"{"error":{"type":"permission_error","message":"Model access denied"}}"#,
+            &[],
+        );
+        assert!(error.message.contains("Transformation · Anthropic"));
+        assert!(error.message.contains("403 Forbidden"));
+        assert!(error.message.contains("Model access denied"));
+    }
+    #[tokio::test]
+    async fn preserves_status_for_oversized_error_body() {
+        let p = Providers::new(Arc::new(Keys)).unwrap();
+        let body = Box::leak(
+            format!(r#"{{"error":{{"message":"{}"}}}}"#, "x".repeat(17000)).into_boxed_str(),
+        );
+        let url = server(401, body).await;
+        let error = p.json(p.client.get(url), "transcribing").await.unwrap_err();
+        assert!(error.message.contains("401 Unauthorized"));
+        assert!(error.message.len() < 400);
     }
     #[tokio::test]
     async fn categorizes_http_errors_without_echoing_body_or_credentials() {
