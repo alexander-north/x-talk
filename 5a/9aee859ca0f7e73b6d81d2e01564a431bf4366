@@ -1,0 +1,35 @@
+src-tauri/src/providers.rs
+  s_54e2fb785fcb85::t_f154e5779ee142 9-112,156-174,194-203,741,753,764
+  s_54e2fb785fcb85::t_1909f112c0fc94 726-740,742-752,754-763
+src-tauri/src/realtime.rs
+  s_54e2fb785fcb85::t_f154e5779ee142 26-30,183-192,222-224
+  s_54e2fb785fcb85::t_912bd1f371a766 380-390,394-395
+  s_54e2fb785fcb85::t_f733c0514c95ea 391-393
+src-tauri/src/app.rs
+  s_54e2fb785fcb85::t_8126d6b3e31f84 117-118,147-148,156-160,174-179,192
+  s_54e2fb785fcb85::t_f154e5779ee142 114-116,149-155,161-173
+src-tauri/src/meetings/commands.rs
+  s_54e2fb785fcb85::t_e6cb1bd5021411 40-45,731
+  s_54e2fb785fcb85::t_8126d6b3e31f84 52
+  s_54e2fb785fcb85::t_749a64aed50504 625,632-652
+SPEC.md
+  s_54e2fb785fcb85::t_bc0b15f3a2e4e6 197,476
+docs/RELEASE_NOTES.md
+  s_54e2fb785fcb85::t_b0c33d1fb24225 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a9aee859ca0f7e73b6d81d2e01564a431bf4366",
+  "prompts": {},
+  "sessions": {
+    "s_54e2fb785fcb85": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b133-2639-7673-bdba-56eb7f5af3e4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Alexander North <3923397+alexander-north@users.noreply.github.com>"
+    }
+  }
+}
