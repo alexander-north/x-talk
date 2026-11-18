@@ -18,7 +18,7 @@ describe('Windows normal recording Stop',()=>{
  for(const [transform,copyRaw,copyTransformed] of [[true,true,true],[false,true,false],[true,false,true],[true,true,false],[false,false,true]]){
   it(`saves exactly once and delivers enabled clipboard stages (transform=${transform}, raw=${copyRaw}, transformed=${copyTransformed})`,async()=>{
    const s=await command('state');
-   await command('save_settings',{settings:{...s.settings,transform,copy_raw:copyRaw,copy_transformed:copyTransformed,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false}}});
+   await command('save_settings',{settings:{...s.settings,transform,copy_raw:copyRaw,copy_transformed:copyTransformed,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false,failed:false}}});
    const before=await command('history',{offset:0});
    const ids=new Set(before.map(e=>e.id));
    const sentinel='Acceptance clipboard sentinel';

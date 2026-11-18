@@ -263,10 +263,29 @@ pub fn trigger(app: &tauri::AppHandle, action: &str) {
     let app = app.clone();
     let action = action.to_owned();
     tauri::async_runtime::spawn(async move {
+        let recording = app
+            .state::<AppState>()
+            .capture
+            .state
+            .lock()
+            .is_ok_and(|state| state.active);
+        let starting = action == "start" || (action == "toggle" && !recording);
         if let Err(e) = crate::commands::do_capture(&app, &action).await {
             let s = app.state::<AppState>();
             if let Ok(mut state) = s.capture.state.lock() {
                 state.error = Some(e);
+            }
+            // Shortcuts and the tray work while the window is hidden; make the failure noticeable
+            // without stealing focus. The next capture event restores the tooltip.
+            if !s.shutting_down.load(Ordering::Acquire) {
+                s.cues.submit("failed", false, s.cues.context());
+            }
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_tooltip(Some(if starting {
+                    "x-talk · Couldn't start — open for details"
+                } else {
+                    "x-talk · Couldn't finish — open for details"
+                }));
             }
             changed(&app);
         }
@@ -624,7 +643,6 @@ pub fn run() {
             crate::commands::history,
             crate::commands::entry,
             crate::commands::retry,
-            crate::commands::edit_metadata,
             crate::commands::edit_recording,
             crate::commands::recordings,
             crate::commands::delete_entry,

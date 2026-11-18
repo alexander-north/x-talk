@@ -7,7 +7,7 @@ async function command(name,args={}){return browser.execute((name,args)=>window.
 describe('Lightweight recording progress',()=>{
  it('updates capture and final text without reloading devices, keys, or history pages',async()=>{
   const s=await command('state');if(!s.test_providers)throw Error('Requires isolated test providers');
-  await command('save_settings',{settings:{...s.settings,theme:'day',transform:true,copy_raw:false,copy_transformed:false,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false}}});
+  await command('save_settings',{settings:{...s.settings,theme:'day',transform:true,copy_raw:false,copy_transformed:false,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false,failed:false}}});
   await expect($('.app')).toHaveAttribute('data-theme','day');await browser.pause(500);
   diagnostics=s.diagnostics;
   const metadataBefore=reads('metadata');

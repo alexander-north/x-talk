@@ -1,8 +1,9 @@
 /* Warm glass surfaces. Layout and navigation remain shared with the desktop shell. */
 .app{--bg:#f7efe3;--surface:#fffaf3;--ink:#472c25;--muted:#856a58;--line:#e6cdb5;--accent:#bf5938;--accent-soft:#f8dfcc;--field:#fff5e8;--shadow:#b76b3920;background:radial-gradient(ellipse at 47% 14%,#ffe5ce75,transparent 48%),var(--bg);position:relative}
 .app[data-theme=night]{--bg:#211c1b;--surface:#302522;--ink:#f4e6d4;--muted:#c0a38e;--line:#654336;--accent:#ffac7d;--accent-soft:#51342b;--field:#29211e;--shadow:#07050480;background:radial-gradient(ellipse at 48% 19%,#6d3b2d33,transparent 48%),var(--bg)}
-.app::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:5;background:radial-gradient(260px circle at var(--light-x,-400px) var(--light-y,-400px),#fff5c819,transparent 80%)}
-.app[data-theme=night]::after{background:radial-gradient(260px circle at var(--light-x,-400px) var(--light-y,-400px),#ffc2820c,transparent 80%)}
+/* Pointer light: a fixed-size box moved by transform so pointer moves only recomposite; the clipped .app keeps it in bounds. */
+.pointer-light{position:absolute;left:0;top:0;width:520px;height:520px;pointer-events:none;z-index:5;transform:translate(-660px,-660px);will-change:transform;background:radial-gradient(260px circle at center,#fff5c819,transparent 80%)}
+.app[data-theme=night] .pointer-light{background:radial-gradient(260px circle at center,#ffc2820c,transparent 80%)}
 .nav-rail{background:linear-gradient(100deg,#f0dfc5a8,#f8ead587);border-right-color:#dcbd973d}
 [data-theme=night] .nav-rail{background:linear-gradient(100deg,#392920a8,#2e231c87)}
 .recording-home{--orb-size:210px;padding-top:max(28px,calc(26dvh - var(--orb-size)/2));gap:20px}
@@ -49,7 +50,7 @@
 .compact .glass-orb .starburst svg{width:50px;height:50px}
 .compact .glass-orb .stop-glyph{width:54px;height:54px}
 .compact .record-instruction strong{font-size:15px}
-@media(prefers-reduced-motion:reduce){.orb-symbol.starburst,.orb-symbol.reward{animation:none}.record-orb.glass-orb{transition:none}.record-orb.glass-orb:hover:not(:disabled){transform:none}.app::after{display:none}}
+@media(prefers-reduced-motion:reduce){.orb-symbol.starburst,.orb-symbol.reward{animation:none}.record-orb.glass-orb{transition:none}.record-orb.glass-orb:hover:not(:disabled){transform:none}.pointer-light{display:none}}
 
 /* Keep card slots and glyph layers mounted while their contents crossfade. */
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}

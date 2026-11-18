@@ -5,7 +5,7 @@ async function command(name,args={}) {return browser.execute((name,args)=>window
 let diagnostics;
 function lines(){return readdirSync(diagnostics.directory).filter(n=>n.endsWith('.log')&&n.includes(diagnostics.session.slice(0,8))).sort().flatMap(n=>readFileSync(path.join(diagnostics.directory,n),'utf8').split('\n'));}
 function played(){return lines().filter(l=>l.includes('cue_started')).map(l=>({event:l.match(/event="?([a-z]+)/)?.[1],time:Date.parse(l.split(' ')[0])}));}
-async function configure(enabled){const s=await command('state');await command('save_settings',{settings:{...s.settings,transform:true,copy_raw:false,copy_transformed:false,sounds:Object.fromEntries(['started','stopped','canceled','transcribed','transformed'].map(k=>[k,enabled]))}});}
+async function configure(enabled){const s=await command('state');await command('save_settings',{settings:{...s.settings,transform:true,copy_raw:false,copy_transformed:false,sounds:Object.fromEntries(['started','stopped','canceled','transcribed','transformed','failed'].map(k=>[k,enabled]))}});}
 async function finished(){await browser.waitUntil(async()=>!(await command('state')).jobs.some(j=>['queued','running'].includes(j.status)),{timeout:10000});}
 describe('Native event sound integration',()=>{
  before(async()=>{const s=await command('state');if(!s.test_providers)throw Error('Requires isolated non-network test providers');diagnostics=s.diagnostics;});
@@ -21,13 +21,13 @@ describe('Native event sound integration',()=>{
  });
  it('plays explicit previews with toggles off but rejects them during capture',async()=>{
   await browser.pause(500);await configure(false);const before=played().length;
-  for(const event of ['started','stopped','canceled','transcribed','transformed']){await command('preview_sound',{event});await browser.pause(550);}
-  await browser.waitUntil(()=>played().length===before+5,{timeout:5000});
+  for(const event of ['started','stopped','canceled','transcribed','transformed','failed']){await command('preview_sound',{event});await browser.pause(550);}
+  await browser.waitUntil(()=>played().length===before+6,{timeout:5000});
   await command('capture_action',{action:'start'});
   let rejected=false;try{await command('preview_sound',{event:'transformed'});}catch{rejected=true;}
   if(!rejected)throw Error('Preview was allowed during microphone capture');
   await browser.pause(200);await command('capture_action',{action:'cancel'});await browser.pause(500);
-  if(played().length!==before+5)throw Error('Disabled capture cue or rejected preview played');
+  if(played().length!==before+6)throw Error('Disabled capture cue or rejected preview played');
  });
  it('does not announce an old transformation after a new recording and cancel',async()=>{
   await configure(true);const before=played().length;

@@ -92,7 +92,7 @@ pub async fn progress(app: tauri::AppHandle) -> Result<Progress> {
             .map_err(|_| AppError::input("Capture state unavailable."))?
             .clone();
         Ok(Progress {
-            jobs: s.store.jobs()?.into_iter().map(JobView::from).collect(),
+            jobs: s.store.job_views()?,
             capture,
             operation_busy: operation_busy(&s)?,
             operation_stage: operation_stage(&s),
@@ -120,7 +120,7 @@ pub async fn state(app: tauri::AppHandle) -> Result<State> {
             #[cfg(feature = "test-providers")]
             test_providers: crate::test_support::enabled(),
             transformation: s.store.transformation()?,
-            jobs: s.store.jobs()?.into_iter().map(JobView::from).collect(),
+            jobs: s.store.job_views()?,
             capture: s
                 .capture
                 .state
@@ -214,7 +214,7 @@ pub async fn do_capture(app: &tauri::AppHandle, action: &str) -> Result<()> {
                 s.keys.get(&p.provider)?;
             }
             Action::Start {
-                snapshot,
+                snapshot: Box::new(snapshot),
                 device: settings.microphone,
             }
         };
@@ -408,23 +408,6 @@ pub async fn retry(app: tauri::AppHandle, id: String, revision: u64, kind: Strin
         }
         s.store.retry(&id, revision, &kind, snap)?;
         s.wake.notify_one();
-        changed(&app);
-        Ok(())
-    })
-    .await
-}
-#[tauri::command]
-pub async fn edit_metadata(
-    app: tauri::AppHandle,
-    id: String,
-    revision: u64,
-    title: String,
-    subtitle: String,
-) -> Result<()> {
-    blocking(move || {
-        app.state::<AppState>()
-            .store
-            .edit(&id, revision, title, subtitle)?;
         changed(&app);
         Ok(())
     })
@@ -964,6 +947,7 @@ pub fn preview_sound(app: tauri::AppHandle, event: String) -> Result<()> {
         "canceled",
         "transcribed",
         "transformed",
+        "failed",
     ]
     .contains(&event.as_str())
     {

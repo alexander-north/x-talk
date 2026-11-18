@@ -18,6 +18,7 @@ EVENTS = {
     'canceled': ('record-cancel', .320),
     'transcribed': ('transcription-complete', .440),
     'transformed': ('polishing-complete', .350),
+    'failed': ('attention', .300),
 }
 
 
@@ -78,6 +79,16 @@ def render(event):
             voice(out, start, length, hz, hz, gain,
                   .010, 2.6,
                   fm=.18, ratio=1., harmonic=.28)
+    elif event == 'failed':
+        # Two short, identical low-mid knocks: a request for attention, not a melody.
+        # The flat repeat and darker modulation set it apart from every gesture above.
+        for start, length, hz, gain in [
+            (0., .120, 233.08, .50),
+            (.140, .160, 233.08, .52),
+        ]:
+            voice(out, start, length, hz, hz, gain,
+                  .006, 3.2,
+                  fm=.55, ratio=3., harmonic=.30)
     else:
         # One shared C-major arc: C4-D4-F4 followed by G4-A4-C5.
         # Both phrases skip upward on the final step (1-2-4 / 5-6-8),
@@ -123,9 +134,9 @@ if __name__ == '__main__':
             sequence.extend(samples)
             sequence.extend([0.] * round(.7 * RATE))
     if args.extras:
-        write(extras / 'five-cues.wav', sequence, 16)
+        write(extras / 'all-cues.wav', sequence, 16)
         write(extras / 'completion-pair.wav',
               render('transcribed') + render('transformed'), 16)
         write(extras / 'progression.wav',
               render('started') + [0.] * RATE + render('transcribed') + [0.] * RATE + render('transformed'), 16)
-    print('Rendered five runtime cues' + (' and scratch audition assets.' if args.extras else '.'))
+    print(f'Rendered {len(EVENTS)} runtime cues' + (' and scratch audition assets.' if args.extras else '.'))

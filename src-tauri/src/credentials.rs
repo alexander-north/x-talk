@@ -18,6 +18,22 @@ fn check(provider: &str) -> Result<()> {
     }
     Ok(())
 }
+pub fn display_name(provider: &str) -> &str {
+    match provider {
+        "openai" => "OpenAI",
+        "assemblyai" => "AssemblyAI",
+        "elevenlabs" => "ElevenLabs",
+        "deepgram" => "Deepgram",
+        "anthropic" => "Anthropic",
+        other => other,
+    }
+}
+pub fn missing_key_message(provider: &str) -> String {
+    format!(
+        "Add your {} API key in Settings → API Keys.",
+        display_name(provider)
+    )
+}
 #[cfg(windows)]
 mod native {
     use super::*;
@@ -38,7 +54,7 @@ mod native {
                     return Err(AppError::new(
                         "credentials",
                         "missing_key",
-                        format!("Add a {provider} API key in Providers."),
+                        missing_key_message(provider),
                     ));
                 }
                 let bytes = std::slice::from_raw_parts(
@@ -111,5 +127,19 @@ impl CredentialStore for NativeCredentials {
     }
     fn delete(&self, p: &str) -> Result<()> {
         self.get(p).map(|_| ())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn missing_key_message_names_provider_and_settings_location() {
+        assert_eq!(
+            missing_key_message("openai"),
+            "Add your OpenAI API key in Settings → API Keys."
+        );
+        for provider in PROVIDERS {
+            assert_ne!(display_name(provider), provider);
+        }
     }
 }

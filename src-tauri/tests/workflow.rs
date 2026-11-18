@@ -183,8 +183,14 @@ fn transcript_retry_preserves_old_transform_and_manual_metadata() {
     j.stage = "transforming".into();
     s.transcript(&j, "original".into(), None).unwrap();
     let e = s.entry(&e.id).unwrap();
-    s.edit(&e.id, e.revision, "My title".into(), "My subtitle".into())
-        .unwrap();
+    s.edit_recording(
+        &e.id,
+        e.revision,
+        "My title".into(),
+        "My subtitle".into(),
+        "original".into(),
+    )
+    .unwrap();
     j.input_revision = 1;
     j.stage = "ready".into();
     s.transformed(&j, "cleaned".into(), None).unwrap();
@@ -210,12 +216,22 @@ struct Fakes {
     copy_fail: bool,
     transform_fail: bool,
     asynchronous: bool,
+    /// Retained audio exceeds the import size limit but is otherwise valid.
+    oversized: bool,
     transcription_errors: Mutex<std::collections::VecDeque<&'static str>>,
     transformation_errors: Mutex<std::collections::VecDeque<&'static str>>,
 }
 #[async_trait]
 impl MediaProcessor for Fakes {
-    async fn probe(&self, _: &Path) -> Result<AudioInfo> {
+    async fn probe(&self, path: &Path) -> Result<AudioInfo> {
+        if self.oversized {
+            return Err(AppError::input(
+                "Audio source exceeds the 1 GiB import limit.",
+            ));
+        }
+        self.inspect(path).await
+    }
+    async fn inspect(&self, _: &Path) -> Result<AudioInfo> {
         Ok(AudioInfo {
             duration: 1.,
             bytes: 14,
@@ -339,6 +355,32 @@ async fn realtime_uses_confirmed_result_then_existing_delivery_and_transformatio
     assert!(all(&s)[0].realtime.is_none());
 }
 #[tokio::test]
+async fn long_realtime_original_beyond_import_size_limit_keeps_streamed_result() {
+    let (_d, s) = store();
+    let e = realtime_job(
+        &s,
+        Some(RealtimeOutcome {
+            result: Ok("Long streamed words.".into()),
+            finalize_ms: 50,
+        }),
+        false,
+    );
+    let f = Arc::new(Fakes {
+        oversized: true,
+        ..Fakes::default()
+    });
+    worker(s.clone(), f.clone()).drain().await.unwrap();
+    assert_eq!(
+        s.entry(&e.id).unwrap().transcript.as_deref(),
+        Some("Long streamed words.")
+    );
+    assert_eq!(all(&s)[0].status, "complete");
+    assert_eq!(
+        *f.events.lock().unwrap(),
+        vec!["copy:Long streamed words.", "sound:transcribed"]
+    );
+}
+#[tokio::test]
 async fn realtime_failure_or_missing_receipt_never_reuploads_or_delivers() {
     for outcome in [
         None,
@@ -351,7 +393,7 @@ async fn realtime_failure_or_missing_receipt_never_reuploads_or_delivers() {
         let e = realtime_job(&s, outcome, false);
         let f = Arc::new(Fakes::default());
         worker(s.clone(), f.clone()).drain().await.unwrap();
-        assert!(f.events.lock().unwrap().is_empty());
+        assert_eq!(*f.events.lock().unwrap(), vec!["sound:failed"]);
         assert!(s.entry(&e.id).unwrap().transcript.is_none());
         assert!(s.path(e.audio.as_ref().unwrap()).unwrap().exists());
         let snapshot = all(&s)[0].snapshot.clone();
@@ -488,6 +530,12 @@ async fn transform_failure_keeps_raw_and_next_job_runs() {
     let log = f.events.lock().unwrap();
     assert_eq!(log.iter().filter(|e| e.starts_with("copy:")).count(), 2);
     assert!(!log.contains(&"sound:transformed".into()));
+    assert_eq!(
+        log.iter()
+            .filter(|e| e.starts_with("sound:"))
+            .collect::<Vec<_>>(),
+        ["sound:transcribed", "sound:failed", "sound:transcribed"]
+    );
 }
 #[tokio::test]
 async fn clipboard_failure_is_separate_and_no_stage_repeats() {
@@ -608,6 +656,130 @@ fn upgrading_v1_keeps_history_and_creates_consistent_backup() {
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
     assert_eq!(version, 1);
+    assert_eq!(user_version(&s), 3);
+}
+fn user_version(s: &Store) -> u32 {
+    s.call(|db| Ok(db.pragma_query_value(None, "user_version", |r| r.get(0))?))
+        .unwrap()
+}
+#[test]
+fn upgrading_v2_adds_audio_index_without_backup_and_keeps_history() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("audio")).unwrap();
+    std::fs::create_dir(dir.path().join("tmp")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("x-talk.sqlite3")).unwrap();
+    db.execute_batch(include_str!("../migrations/001.sql"))
+        .unwrap();
+    db.execute_batch(include_str!("../migrations/002.sql"))
+        .unwrap();
+    db.execute(
+        "INSERT INTO settings VALUES(1,?1)",
+        [serde_json::to_string(&Settings::default()).unwrap()],
+    )
+    .unwrap();
+    let p = Preset::seed();
+    db.execute(
+        "INSERT INTO presets VALUES(?1,?2,?3)",
+        rusqlite::params![p.id, p.name, serde_json::to_string(&p).unwrap()],
+    )
+    .unwrap();
+    let identifier = id();
+    let relative = format!("audio/{identifier}.wav");
+    std::fs::write(dir.path().join(&relative), b"kept audio").unwrap();
+    let e = Entry::new(identifier, "import", "Kept".into(), Some(relative), 1., 10);
+    db.execute(
+        "INSERT INTO entries(id,document) VALUES(?1,?2)",
+        rusqlite::params![e.id, serde_json::to_string(&e).unwrap()],
+    )
+    .unwrap();
+    drop(db);
+    let s = Store::open(dir.path()).unwrap();
+    assert_eq!(user_version(&s), 3);
+    let index: bool = s
+        .call(|db| {
+            Ok(db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='entries_audio')",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert!(index);
+    assert!(!dir.path().join("before-migration.sqlite3").exists());
+    assert!(!dir.path().join("before-migration-v2.sqlite3").exists());
+    assert_eq!(s.entry(&e.id).unwrap().audio, e.audio);
+    drop(s);
+    // Reopening an upgraded database is a no-op.
+    assert_eq!(user_version(&Store::open(dir.path()).unwrap()), 3);
+}
+#[test]
+fn newer_database_versions_are_refused() {
+    let (dir, s) = store();
+    s.call(|db| Ok(db.execute_batch("PRAGMA user_version=4")?))
+        .unwrap();
+    drop(s);
+    assert_eq!(Store::open(dir.path()).err().unwrap().category, "version");
+}
+#[test]
+fn retention_prunes_only_finished_jobs_beyond_the_newest_hundred() {
+    let (_d, s) = store();
+    let mut settings = s.settings().unwrap();
+    settings.keep_audio = None;
+    s.save_settings(settings).unwrap();
+    let job = |s: &Store, status: &str| {
+        let e = Entry::new(id(), "import", status.into(), None, 1., 0);
+        s.interrupted_entry(e.clone()).unwrap();
+        let mut j = Job::new(e.id, "transcribe", snapshot(false), false);
+        j.status = status.into();
+        insert_job(s, j)
+    };
+    // Unfinished jobs older than all finished history must survive pruning.
+    let kept = [
+        "failed",
+        "canceled",
+        "paused",
+        "unknown",
+        "queued",
+        "running",
+        "canceling",
+    ]
+    .map(|status| job(&s, status));
+    let finished = (0..105)
+        .map(|i| job(&s, if i % 2 == 0 { "complete" } else { "discarded" }))
+        .collect::<Vec<_>>();
+    s.retention().unwrap();
+    let remaining = s
+        .call(|db| {
+            let mut q = db.prepare("SELECT id FROM jobs")?;
+            let ids = q
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
+            Ok(ids)
+        })
+        .unwrap();
+    for gone in &finished[..5] {
+        assert!(!remaining.contains(gone));
+    }
+    for present in finished[5..].iter().chain(&kept) {
+        assert!(remaining.contains(present));
+    }
+    assert_eq!(remaining.len(), 100 + kept.len());
+    // Retention is idempotent once the history is within bounds.
+    s.retention().unwrap();
+    assert_eq!(all(&s).len(), remaining.len());
+}
+fn insert_job(s: &Store, j: Job) -> String {
+    let id = j.id.clone();
+    let document = serde_json::to_string(&j).unwrap();
+    s.call(move |db| {
+        db.execute(
+            "INSERT INTO jobs(id,entry_id,status,stage,document) VALUES(?1,?2,?3,?4,?5)",
+            rusqlite::params![j.id, j.entry_id, j.status, j.stage, document],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    id
 }
 
 #[test]
@@ -651,6 +823,7 @@ async fn lost_transform_response_after_async_transcription_requires_stage_retry(
             ("unknown", "transforming")
         );
         assert!(j.error.as_ref().unwrap().message.contains("another charge"));
+        assert_eq!(f.events.lock().unwrap().last().unwrap(), "sound:failed");
         assert!(s.resume(vec![j.id.clone()], false).is_err());
         // Also reject legacy paused transformation records, even with a remote transcription ID.
         let mut legacy = j.clone();
@@ -726,6 +899,10 @@ async fn async_resume_polls_existing_id_and_replaces_or_clears_attempt_errors() 
         2
     );
     assert!(!events.iter().any(|e| e.starts_with("copy:")));
+    assert!(
+        !events.iter().any(|e| e == "sound:failed"),
+        "pausing pollable work is not a failure"
+    );
 }
 #[test]
 fn startup_clears_stale_error_from_legacy_completed_jobs() {
@@ -1238,6 +1415,32 @@ fn clear_recordings_can_retry_unfinished_managed_file_cleanup() {
     assert_eq!(remaining, 0);
 }
 
+#[test]
+fn clear_recordings_removes_migration_backups_and_truncates_the_log() {
+    let (dir, s) = store();
+    admit(&s, "import", false);
+    s.cancel_processing().unwrap();
+    let backups = [
+        "before-migration.sqlite3",
+        "before-migration.sqlite3-wal",
+        "before-migration-v2.sqlite3",
+        "before-migration-v2.sqlite3-shm",
+    ];
+    for name in backups {
+        std::fs::write(dir.path().join(name), b"old history").unwrap();
+    }
+    // A sibling that cannot be removed must not fail an otherwise successful clear.
+    let stuck = dir.path().join("before-migration-v2.sqlite3-wal");
+    std::fs::create_dir(&stuck).unwrap();
+    assert_eq!(s.clear_recordings(true).unwrap(), 1);
+    for name in backups {
+        assert!(!dir.path().join(name).exists(), "{name} was not removed");
+    }
+    assert!(stuck.is_dir());
+    let wal = dir.path().join("x-talk.sqlite3-wal");
+    assert_eq!(std::fs::metadata(wal).map(|m| m.len()).unwrap_or(0), 0);
+    assert!(s.entries(0).unwrap().is_empty());
+}
 #[test]
 fn latest_entry_follows_library_changes_without_loading_a_history_page() {
     let (_dir, s) = store();

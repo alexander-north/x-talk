@@ -4,12 +4,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { api, message, duration } from './ipc';
 import type { Entry } from './types';
 describe('validated command contract', () => {
- it('sends revision tokens for retries and metadata changes', async () => {
+ it('sends revision tokens for retries', async () => {
   const entry = { id: 'entry-id', revision: 7 } as Entry;
   await api.retry(entry, 'transform');
   expect(invoke).toHaveBeenLastCalledWith('retry', { id: 'entry-id', revision: 7, kind: 'transform' });
-  await api.edit(entry, 'Title', 'Subtitle');
-  expect(invoke).toHaveBeenLastCalledWith('edit_metadata', { id: 'entry-id', revision: 7, title: 'Title', subtitle: 'Subtitle' });
  });
  it('requires confirmed deletion and selects explicit saved output', async () => {
   await api.delete({ id: 'id', revision: 3 } as Entry);

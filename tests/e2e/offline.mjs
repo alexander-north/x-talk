@@ -12,7 +12,7 @@ describe('Offline native acceptance',()=>{
   const state=await command('state');
   if(state.test_providers!==true||state.capture.active)throw Error('Expected idle isolated acceptance build');
   if(state.recovery_warnings.length<1)throw Error('Damaged journals were not reported');
-  await command('save_settings',{settings:{...state.settings,transcription_mode:'realtime',transcription:{provider:'elevenlabs',model:'scribe_v2',prompt:'',temperature:null},transform:true,copy_raw:false,copy_transformed:false,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false}}});
+  await command('save_settings',{settings:{...state.settings,transcription_mode:'realtime',transcription:{provider:'elevenlabs',model:'scribe_v2',prompt:'',temperature:null},transform:true,copy_raw:false,copy_transformed:false,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false,failed:false}}});
   await expect($('button[aria-label="Cancel recording"]')).not.toExist();
  });
  it('imports a generated WAV through the native picker and completes both stages',async()=>{

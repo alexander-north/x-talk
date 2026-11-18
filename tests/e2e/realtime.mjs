@@ -9,7 +9,7 @@ describe('Real-time microphone recording with isolated providers',()=>{
  before(async()=>{
   const state=await command('state');
   if(state.test_providers!==true)throw Error('Real-time acceptance requires isolated fake providers');
-  await command('save_settings',{settings:{...state.settings,transcription_mode:'realtime',transcription:{provider:'elevenlabs',model:'scribe_v2',prompt:'',temperature:null},transform:true,copy_raw:true,copy_transformed:true,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false}}});
+  await command('save_settings',{settings:{...state.settings,transcription_mode:'realtime',transcription:{provider:'elevenlabs',model:'scribe_v2',prompt:'',temperature:null},transform:true,copy_raw:true,copy_transformed:true,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false,failed:false}}});
  });
  it('previews during recording, saves final text on Stop and transforms once',async()=>{
   const before=await command('history',{offset:0});

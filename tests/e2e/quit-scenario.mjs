@@ -12,7 +12,7 @@ export function quitScenario(mode,realtime=false){
    const audio=path.join(folder,'..','audio');
    const existing=new Set(readdirSync(audio));
    if(mode!=='idle'){
-    const sounds={started:false,stopped:false,canceled:false,transcribed:false,transformed:false};
+    const sounds={started:false,stopped:false,canceled:false,transcribed:false,transformed:false,failed:false};
     await command('save_settings',{settings:{...state.settings,sounds,...(realtime?{transcription_mode:'realtime',transcription:{provider:'elevenlabs',model:'scribe_v2',prompt:'',temperature:null}}:{})}});
     await command('capture_action',{action:'start'});await browser.pause(1000);
     if(realtime)await browser.waitUntil(async()=>!!(await command('progress')).capture.live?.text);

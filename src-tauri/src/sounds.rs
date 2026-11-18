@@ -3,14 +3,15 @@
 #[cfg(any(windows, test))]
 use crate::domain::*;
 
-pub const VERSION: &str = "v7";
+pub const VERSION: &str = "v8";
 #[cfg(test)]
-const EVENTS: [&str; 5] = [
+const EVENTS: [&str; 6] = [
     "started",
     "stopped",
     "canceled",
     "transcribed",
     "transformed",
+    "failed",
 ];
 
 #[cfg(any(windows, test))]
@@ -25,6 +26,7 @@ pub(crate) fn asset(event: &str) -> Result<&'static [u8]> {
         "transformed" => Ok(include_bytes!(
             "../../assets/sounds/runtime/transformed.wav"
         )),
+        "failed" => Ok(include_bytes!("../../assets/sounds/runtime/failed.wav")),
         _ => Err(AppError::input("Unknown event sound.")),
     }
 }
@@ -36,7 +38,10 @@ mod tests {
     #[test]
     fn cues_have_distinct_durations_audible_energy_and_no_clipping() {
         let mut lengths = std::collections::BTreeSet::new();
-        for (event, frames) in EVENTS.into_iter().zip([19200, 15840, 15360, 21120, 16800]) {
+        for (event, frames) in EVENTS
+            .into_iter()
+            .zip([19200, 15840, 15360, 21120, 16800, 14400])
+        {
             let mut reader =
                 hound::WavReader::new(std::io::Cursor::new(asset(event).unwrap())).unwrap();
             assert_eq!(reader.spec().sample_rate, 48000);

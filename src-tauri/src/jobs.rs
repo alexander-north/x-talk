@@ -63,14 +63,24 @@ impl Worker {
         self.feedback.changed();
         let started = std::time::Instant::now();
         let job_id = j.id.clone();
+        let canceled = async {
+            loop {
+                // Register before checking, so a cancellation committed in between still wakes us.
+                let notified = self.store.cancellation_signal().notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.store.cancellation_requested(&job_id)? {
+                    return Ok::<(), AppError>(());
+                }
+                notified.await;
+            }
+        };
         let result = tokio::select! {
             result = self.process(&mut j) => result,
-            result = async {
-                loop {
-                    if self.store.cancellation_requested(&job_id)? { return Ok::<(), AppError>(()); }
-                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-                }
-            } => { result?; Err(AppError::new("processing", "canceled", "Processing canceled.")) }
+            result = canceled => {
+                result?;
+                Err(AppError::new("processing", "canceled", "Processing canceled."))
+            }
         };
         if self.store.cancellation_requested(&j.id)? {
             // Drop the in-flight future before acknowledging cancellation and admitting new work.
@@ -82,26 +92,37 @@ impl Worker {
         if let Err(mut e) = result {
             e.stage = j.stage.clone();
             tracing::warn!(stage = j.stage, category = e.category, "stage_failed");
-            j.status = if j.can_poll_transcription()
-                && ["poll_timeout", "timeout", "transport", "rate_limit", "provider_unavailable"]
-                    .contains(&e.category.as_str())
+            let status = if j.can_poll_transcription()
+                && [
+                    "poll_timeout",
+                    "timeout",
+                    "transport",
+                    "rate_limit",
+                    "provider_unavailable",
+                ]
+                .contains(&e.category.as_str())
             {
                 "paused"
             } else if j.requires_explicit_retry()
                 && ["timeout", "transport", "provider_unavailable"].contains(&e.category.as_str())
             {
                 e.message = format!("{} The request outcome may be unknown. Explicitly retry this stage; another charge may apply.", e.message);
-                e.recovery = "Explicitly retry the affected stage; another charge may apply.".into();
+                e.recovery =
+                    "Explicitly retry the affected stage; another charge may apply.".into();
                 "unknown"
             } else {
                 "failed"
-            }.into();
+            };
+            j.status = status.into();
             j.error = Some(e);
-            if let Err(error) = self.store.checkpoint(&j) {
-                if error.category != "canceled" {
-                    return Err(error);
+            match self.store.checkpoint(&j) {
+                // Pollable AssemblyAI work pauses quietly; failures need attention even when hidden.
+                Ok(()) if status != "paused" => self.feedback.sound("failed"),
+                Ok(()) => {}
+                Err(error) if error.category == "canceled" => {
+                    self.store.finish_cancellation(&j.id)?
                 }
-                self.store.finish_cancellation(&j.id)?;
+                Err(error) => return Err(error),
             }
         }
         tracing::info!(
@@ -158,7 +179,8 @@ impl Worker {
                 && j.kind == "initial"
             {
                 // Validate the retained original, but never prepare/upload it a second time.
-                self.media.probe(&self.store.path(&relative)?).await?;
+                // Native-rate float recordings can exceed the import size limit within 60 minutes.
+                self.media.inspect(&self.store.path(&relative)?).await?;
                 self.stage(j, "transcribing").await?;
                 let outcome = j.realtime.clone().ok_or_else(|| crate::realtime::failure("stream_interrupted", "Real-time transcription was interrupted. Retry the retained audio explicitly from Recordings."))?;
                 let text = outcome.result?;

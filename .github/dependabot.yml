@@ -1,0 +1,37 @@
+version: 2
+# Versions stay pinned exactly (package.json exact, Cargo.toml `=x.y.z`); Dependabot bumps the pins.
+# Tauri's npm API/CLI and Rust crates must move together: merge the npm and cargo `tauri` PRs as a pair.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      tauri:
+        patterns: ['@tauri-apps/*']
+      npm-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+        exclude-patterns: ['@tauri-apps/*']
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      tauri:
+        patterns: ['tauri', 'tauri-*']
+      cargo-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+        exclude-patterns: ['tauri', 'tauri-*']

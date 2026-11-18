@@ -1,3 +1,17 @@
+# x-talk: audible failures, faster libraries, safer long recordings
+
+This release fixes long real-time recordings, makes failures audible when x-talk is in the tray, and tightens privacy and the release pipeline.
+
+- **Long real-time recordings keep their transcript.** Recordings past roughly 47 minutes on a stereo microphone no longer fail validation after the transcript was already streamed.
+- **You can hear when something goes wrong.** If a shortcut or tray action can't start, or processing fails, x-talk plays a short attention sound and the tray tooltip points you to the window. Turn it off under Delivery and Sounds → Something went wrong.
+- **Retry transcription asks first** when it would replace an existing transcript, including your edits.
+- **Large libraries stay quick.** Finishing a recording no longer rescans the whole library, and old finished job records are pruned.
+- **Clear All clears more.** It also removes old database backups left by upgrades, and deleted text is overwritten in the database.
+- **Start at login is off for new installations.** Existing installations keep their setting.
+- Missing-key messages now point to Settings → API Keys. The recorder uses less CPU while idle.
+
+After this update the local database cannot be opened by older x-talk versions.
+
 # Recording indicators and clearer provider errors
 
 Dictation and meeting recordings now show an orange Windows taskbar/tray icon and a Recording window title. The normal appearance returns when capture ends. Provider HTTP errors identify the provider, transcription or transformation stage, status, and available error detail, with guidance for exhausted credits and account access.

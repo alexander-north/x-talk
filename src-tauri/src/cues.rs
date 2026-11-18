@@ -215,6 +215,7 @@ fn enabled(s: &Sounds, event: &str) -> bool {
         "canceled" => s.canceled,
         "transcribed" => s.transcribed,
         "transformed" => s.transformed,
+        "failed" => s.failed,
         _ => false,
     }
 }
@@ -225,6 +226,7 @@ fn duration(event: &str) -> Duration {
         "canceled" => 320,
         "transcribed" => 440,
         "transformed" => 350,
+        "failed" => 300,
         _ => 0,
     })
 }
@@ -319,6 +321,34 @@ mod tests {
         assert_eq!(s.job_context(8), Some(s.epoch));
     }
     #[test]
+    fn failure_cue_is_ordinary_feedback_that_never_interrupts_capture() {
+        let mut s = Schedule::default();
+        let t = Instant::now();
+        s.begin_capture();
+        assert!(!s.enqueue("failed", false, s.context(), t));
+        assert!(!s.enqueue("failed", false, Some(s.epoch), t));
+        assert!(
+            s.recording,
+            "a failure cue must not end the recording state"
+        );
+        assert!(s.pending.is_empty());
+        s.recording = false;
+        assert!(s.enqueue("transcribed", false, s.context(), t));
+        assert!(s.enqueue("failed", false, s.context(), t));
+        assert!(!s.recording);
+        assert_eq!(s.next(t).unwrap().event, "transcribed");
+        assert_eq!(s.next(t).unwrap().event, "failed");
+        let sounds = Settings::default().sounds;
+        assert!(enabled(&sounds, "failed"));
+        assert!(!enabled(
+            &Sounds {
+                failed: false,
+                ..sounds
+            },
+            "failed"
+        ));
+    }
+    #[test]
     fn timing_matches_embedded_audio() {
         for event in [
             "started",
@@ -326,6 +356,7 @@ mod tests {
             "canceled",
             "transcribed",
             "transformed",
+            "failed",
         ] {
             let r =
                 hound::WavReader::new(std::io::Cursor::new(crate::sounds::asset(event).unwrap()))
