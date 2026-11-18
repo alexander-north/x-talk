@@ -3,7 +3,7 @@
 #[cfg(any(windows, test))]
 use crate::domain::*;
 
-pub const VERSION: &str = "v7";
+pub const VERSION: &str = "v8";
 #[cfg(test)]
 const EVENTS: [&str; 6] = [
     "started",
@@ -40,7 +40,7 @@ mod tests {
         let mut lengths = std::collections::BTreeSet::new();
         for (event, frames) in EVENTS
             .into_iter()
-            .zip([16800, 15840, 15360, 19200, 21120, 14400])
+            .zip([19200, 15840, 15360, 21120, 16800, 14400])
         {
             let mut reader =
                 hound::WavReader::new(std::io::Cursor::new(asset(event).unwrap())).unwrap();

@@ -5,15 +5,15 @@ function star(c:CanvasRenderingContext2D,x:number,y:number,r:number){
  c.beginPath();c.moveTo(x,y-r);c.quadraticCurveTo(x+r*.15,y-r*.15,x+r,y);c.quadraticCurveTo(x+r*.15,y+r*.15,x,y+r);c.quadraticCurveTo(x-r*.15,y+r*.15,x-r,y);c.quadraticCurveTo(x-r*.15,y-r*.15,x,y-r);c.fill();
 }
 /** A single bounded canvas keeps the glass, spectral halo and particles in one composited layer. */
-export function paintOrb(c:CanvasRenderingContext2D,phase:OrbPhase,t:number,bands:number[],reduced:boolean,shapeMix=phase==='transforming'?1:0){
+export function paintOrb(c:CanvasRenderingContext2D,phase:OrbPhase,t:number,bands:number[],reduced:boolean,shapeMix=phase==='transforming'?1:0,meeting=false,previewActivity=false){
  c.clearRect(0,0,440,440);c.save();c.translate(220,220);
- const recording=phase==='recording',transcribing=phase==='transcribing'||phase==='canceling';
+ const recording=phase==='recording'||meeting&&previewActivity&&phase==='idle',transcribing=phase==='transcribing'||phase==='canceling';
  const pulse=reduced?1:1+Math.sin(t*tau/4)*.012;
  const r=108*pulse,corner=r+(35-r)*shapeMix;
  const shape=(inset=0)=>{c.beginPath();c.roundRect(-r+inset,-r+inset,(r-inset)*2,(r-inset)*2,Math.max(20,corner-inset));};
  let glow=c.createRadialGradient(0,12,r*.7,0,12,157);glow.addColorStop(0,'#f7794938');glow.addColorStop(.65,'#e9884822');glow.addColorStop(1,'#d97f3800');c.fillStyle=glow;c.fillRect(-170,-170,340,340);
  // Warm glass body, with a directional champagne reflection and a burnt-orange lower edge.
- const glass=c.createLinearGradient(-90,-100,90,110);glass.addColorStop(0,'#fff7d2');glass.addColorStop(.19,'#ffbd86');glass.addColorStop(.43,'#f68b59');glass.addColorStop(.72,'#dc623c');glass.addColorStop(1,'#ffb881');
+ const glass=c.createLinearGradient(-90,-100,90,110);glass.addColorStop(0,meeting?'#ffe2f5':'#fff7d2');glass.addColorStop(.19,meeting?'#efa1d1':'#ffbd86');glass.addColorStop(.43,meeting?'#d96bac':'#f68b59');glass.addColorStop(.72,meeting?'#a74382':'#dc623c');glass.addColorStop(1,meeting?'#ffc78d':'#ffb881');
  c.shadowColor='#a33e302e';c.shadowBlur=24;c.shadowOffsetY=13;shape();c.fillStyle=glass;c.fill();c.shadowBlur=0;c.shadowOffsetY=0;
  const lens=c.createRadialGradient(-39,-47,1,8,15,127);lens.addColorStop(0,'#ffe9b498');lens.addColorStop(.42,'#ffbe6e28');lens.addColorStop(.8,'#bd3d3028');lens.addColorStop(1,'#ffdf9c70');shape(9);c.fillStyle=lens;c.fill();
  for(let i=0;i<6;i++){shape(i*2);c.lineWidth=i===0?1.6:1;c.strokeStyle=['#fff8e9dc','#ffc5a393','#fff7dba9','#d15b365c','#fffceab0','#fff3bf55'][i];c.stroke();}

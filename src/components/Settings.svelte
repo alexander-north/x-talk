@@ -1,8 +1,13 @@
 <script lang="ts">
- import {untrack,tick} from 'svelte';
+ import {onMount,untrack,tick} from 'svelte';
+ import {notify} from '../notifications';
  import {api,message,elapsedTime} from '../ipc';
  import type {AppState,Transformation,Settings} from '../types';
  import {providerNames,settingsSections,textDirty,thinkingLabel,thinkingValue,type SettingsChange} from '../settings';
+ import {meetings} from '../meetings/ipc';
+ let meetingRetention=$state<number|null>(50);
+ onMount(()=>{void meetings.retention().then(value=>meetingRetention=value).catch(e=>error=message(e));});
+ async function retainMeetings(value:number|null){await task(async()=>{await meetings.setRetention(value);meetingRetention=value;},'Meeting audio retention saved');}
  import Icon from './Icon.svelte';
  import Updates from './Updates.svelte';
  import ShortcutEditor from './ShortcutEditor.svelte';
@@ -21,7 +26,9 @@
  let contextDirty=$derived(context!==settings.transcription.prompt);
  let configuredText=$derived(['openai','anthropic'].filter(p=>snapshot.credentials[p]));
  let configuredSpeech=$derived(['openai','assemblyai','elevenlabs','deepgram'].filter(p=>snapshot.credentials[p]));
- $effect(()=>{if(!saved)return;const timer=setTimeout(()=>saved='',2000);return()=>clearTimeout(timer);});
+ $effect(()=>{if(saved){notify(saved);saved='';}});
+ $effect(()=>{if(error)notify(error,true);});
+ $effect(()=>{if(transformDirty||shortcutDirty||contextDirty)notify('Unsaved text changes');});
  $effect(()=>{if(removingKey&&removeDialog&&!removeDialog.open)removeDialog.showModal();});
  $effect(()=>{if(!draft){base=copy(snapshot.transformation);draft=copy(snapshot.transformation);}});
  async function task(work:()=>Promise<unknown>,label='Saved'){saving++;error='';saved='';try{await work();saved=label;return true;}catch(e){error=message(e);return false;}finally{saving--;}}
@@ -56,16 +63,21 @@
  async function test(){if(!draft)return;testing=true;testOutput='';testElapsed=null;const started=performance.now();await task(async()=>{testOutput=await api.test(copy(draft!),testInput);testElapsed=performance.now()-started;},'Test complete');testing=false;}
 </script>
 <main class="settings">
- <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>Settings</h1></div><span class="save-state" role="status">{saving?'Saving…':saved}</span></div>
+ <div class="page-heading"><div><p class="eyebrow">Xtalk {snapshot.diagnostics.version} · {snapshot.diagnostics.commit}</p><h1>Settings</h1></div></div>
  <nav class="settings-tabs" aria-label="Settings sections">{#each settingsSections as name}<button class:chosen={section===name} onclick={()=>openSection(name)}>{name}</button>{/each}</nav>
  <section class="settings-content" aria-label={section}><h2 class="settings-section-title">{section}</h2>
- {#if error}<p class="error-text" role="alert">{error}</p>{/if}
+
  {#if section==='General'}
   <label>Appearance<select value={settings.theme} onchange={e=>{const value=e.currentTarget.value;void change(s=>({...s,theme:value}));}}><option value="system">Auto · follow system</option><option value="day">Light</option><option value="night">Dark</option></select></label>
   {#each [['topmost','Always on top'],['autostart','Start at Windows login in the tray'],['close_to_tray','Keep running when the window is closed']] as [field,label]}<label class="check"><input type="checkbox" checked={settings[field as 'topmost'|'autostart'|'close_to_tray']} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,[field]:value}));}}>{label}</label>{/each}
   <Updates {snapshot} {guard} change={change}/>
   <h2>Diagnostics</h2><p class="help">Version {snapshot.diagnostics.version} · Build {snapshot.diagnostics.build_id}</p><label class="check"><input id="diagnostic-logging" type="checkbox" checked={settings.diagnostic_logging} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,diagnostic_logging:value}));}}>Enable diagnostic logging</label><p class="help">Logs contain app activity and error codes, without API keys, audio, or text content. Nothing is uploaded. Changes apply immediately.</p><p class="help">Logs folder: <code>{snapshot.diagnostics.directory}</code></p><button onclick={()=>task(api.openLogs,'Logs folder opened')}>Open logs folder</button>{#if snapshot.diagnostics.error}<p class="error-text" role="alert">{snapshot.diagnostics.error}</p>{/if}{#if snapshot.diagnostics.dropped_events}<p class="help">{snapshot.diagnostics.dropped_events} diagnostic events could not be written.</p>{/if}
   <h2>Audio retention</h2><label class="check"><input type="checkbox" checked={settings.keep_audio===null} onchange={e=>{const value=e.currentTarget.checked?null:100;void change(s=>({...s,keep_audio:value}));}}>Keep all original audio</label>{#if settings.keep_audio!==null}<label>Keep audio for the latest N entries<input type="number" value={settings.keep_audio} min="1" max="100000" step="1" required onchange={e=>{const value=e.currentTarget.valueAsNumber;void change(s=>({...s,keep_audio:value}));}}></label>{/if}<p class="help">Older text remains in your library. Pending work keeps its audio until it completes or is discarded.</p>
+ {:else if section==='Meetings'}
+  <label>Transcription provider<select aria-label="Meeting transcription provider"><option value="assemblyai">AssemblyAI</option></select></label><p class="help">Speaker-labelled meeting transcripts use AssemblyAI. Meeting briefs use OpenAI Luna. Manage their keys in API Keys.</p>
+  <h2>Audio retention</h2><label class="check"><input type="checkbox" checked={meetingRetention===null} disabled={saving>0} onchange={e=>void retainMeetings(e.currentTarget.checked?null:50)}/>Keep all meeting audio</label>
+  {#if meetingRetention!==null}<label>Keep audio for the latest N meetings<input aria-label="Meeting audio retention" type="number" min="1" max="100000" step="1" value={meetingRetention} disabled={saving>0} onchange={e=>void retainMeetings(e.currentTarget.valueAsNumber)}/></label>{/if}
+  <p class="help">Transcripts, speaker edits and briefs stay indefinitely. Pending work keeps its audio until it completes. This setting is separate from dictation audio retention.</p>
  {:else if section==='Recording'}
   <label>Microphone<select value={settings.microphone??''} onchange={e=>{const value=e.currentTarget.value||null;void change(s=>({...s,microphone:value}));}}><option value="">System default at recording start</option>{#each snapshot.devices as device}<option value={device.id}>{device.name}</option>{/each}</select></label>
   <label class="check"><input type="checkbox" checked={settings.compression} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,compression:value}));}}>Compress upload audio</label><p class="help">Creates a smaller upload copy. The complete original is kept for playback and export.</p>
@@ -100,7 +112,7 @@
    <p class="help model-description">{model?.description}</p>
    {#if model?.reasoning.length}<label>Thinking<select value={thinkingValue(draft,model)} disabled={saving>0} onchange={e=>configureTransformation({reasoning:e.currentTarget.value,temperature:null})}>{#each model.reasoning as level}<option value={level}>{thinkingLabel(level)}</option>{/each}</select></label><p class="help">More thinking can increase latency and cost. Off, minimal, or low is usually enough for transcript cleanup.</p>{/if}
    {#if model?.temperature&&['none','off'].includes(thinkingValue(draft,model))}<label>Temperature (blank uses provider default)<input type="number" value={draft.temperature??''} min={model.temperature[0]} max={model.temperature[1]} step="0.1" onchange={e=>configureTransformation({temperature:e.currentTarget.value===''?null:e.currentTarget.valueAsNumber})}></label>{/if}
-   <label>System prompt<textarea class="prompt" bind:value={draft.system} rows="8"></textarea></label><label>User prompt template <small>Exactly one {'{{input}}'} placeholder</small><textarea class="prompt" bind:value={draft.user} rows="4"></textarea></label><div class="actions"><button class="primary" disabled={!transformDirty||saving>0} onclick={saveTransformation}>Save prompts</button><span class="help">{transformDirty?'Unsaved text changes':'Text saved · model choices apply immediately'}</span></div>
+   <label>System prompt<textarea class="prompt" bind:value={draft.system} rows="8"></textarea></label><label>User prompt template <small>Exactly one {'{{input}}'} placeholder</small><textarea class="prompt" bind:value={draft.user} rows="4"></textarea></label><div class="actions"><button class="primary" disabled={!transformDirty||saving>0} onclick={saveTransformation}>Save prompts</button></div>
    <details class="transformation-test"><summary>Try this transformation</summary><label>Test input<textarea bind:value={testInput} rows="4" placeholder="Paste a transcript to test this prompt"></textarea></label><button disabled={testing||snapshot.operation_busy||snapshot.capture.active||!testInput.trim()||!snapshot.credentials[draft.provider]} onclick={test}>{testing?'Processing…':'Run test'}</button><div class="text-heading"><h3>Test output{#if testElapsed!==null}<span class="output-timing" title="Elapsed time from clicking Run test until the result returned">– {elapsedTime(testElapsed)}</span>{/if}</h3><button disabled={!testOutput} onclick={()=>task(()=>api.copyTest(testOutput),'Test output copied')}>Copy</button></div><div class="output" role="textbox" aria-readonly="true" aria-multiline="true" aria-label="Transformation test output" tabindex="0">{testOutput||'Test output stays in this panel.'}</div></details>
   </div>{/if}
  {:else if section==='Delivery and Sounds'}
@@ -114,5 +126,5 @@
  <div class="dialog-heading"><h2 id="key-removal-title">Remove API key?</h2></div>
  <p>Are you sure you want to remove the saved {providerNames[removingKey]} API key?</p>
  <div class="actions dialog-actions"><button disabled={saving>0} onclick={()=>removingKey=null}>Cancel</button><button class="danger" disabled={saving>0} onclick={()=>removeKey(removingKey!)}>Remove key</button></div>
- {#if error}<p class="error-text" role="alert">{error}</p>{/if}
+
 </dialog>{/if}

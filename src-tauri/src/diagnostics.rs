@@ -27,6 +27,7 @@ pub struct Diagnostics {
 pub struct Status {
     pub version: String,
     pub build_id: String,
+    pub commit: String,
     pub directory: String,
     pub session: String,
     pub pid: u32,
@@ -117,6 +118,7 @@ impl Diagnostics {
         Status {
             version: env!("CARGO_PKG_VERSION").into(),
             build_id: env!("XTALK_BUILD_ID").into(),
+            commit: env!("XTALK_COMMIT").into(),
             directory: self.directory.to_string_lossy().into(),
             session: self.session.clone(),
             pid: std::process::id(),

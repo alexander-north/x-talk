@@ -20,6 +20,7 @@ Windows x64 is the supported desktop target. WSL/Linux is useful for core Rust t
 | Native startup and commands | `src-tauri/src/app.rs`, `commands.rs` | Desktop lifecycle, shortcuts, tray, command registration, state/progress responses |
 | Domain and persistence | `domain.rs`, `storage.rs`, `src-tauri/migrations/` | Settings, jobs, immutable request snapshots, SQLite, history and retention |
 | Capture and media | `capture.rs`, `spectrum.rs`, `media.rs` | Microphone/writer lifecycle, admission/recovery journals, validation and FFmpeg subprocesses |
+| Meetings | `src-tauri/src/meetings/`, `src/meetings/`, `src/components/meetings/` | Separate SQLite library, durable jobs, WASAPI microphone/loopback capture, JSON projection and review UI |
 | Processing | `jobs.rs`, `providers.rs` | Queue/retry/resume behavior, stage persistence, provider requests |
 | Credentials and diagnostics | `credentials.rs`, `diagnostics.rs` | Windows credential storage and bounded local logs |
 | Audio feedback | `cues.rs`, `sounds.rs`, `scripts/generate-sounds.py` | Cue scheduling, playback, reproducible original sound assets |
@@ -69,6 +70,12 @@ python -m unittest discover -s tests/release -v
 ```
 
 Media integration tests use bundled executables on Windows and `/usr/bin/ffmpeg` and `/usr/bin/ffprobe` on Linux by default; `XTALK_FFMPEG` and `XTALK_FFPROBE` override those paths. Do not confuse deterministic acceptance-provider media preparation with these real-media tests.
+
+Offline meeting playback checks exercise real output when an endpoint exists, and assert the explicit no-output error path on hosted machines without sound hardware. Save-dialog acceptance verifies the actual path returned by the native download command; setting filenames through UI Automation can leave the suggested name unchanged on Windows Server. Meeting acceptance is separate from dictation. `tests/e2e/meetings.mjs` runs in the offline suite with real native media/storage/clipboard and synthetic providers. `XTALK_E2E_MEETING_RECOVERY=1` selects an isolated recovery suite with generated raw audio and no microphone or paid requests; it checks compressed admission, raw-file cleanup, and explicit processing of a recovered meeting. `cargo test --manifest-path src-tauri/Cargo.toml --test meetings --test meeting_media --locked` covers meeting domain, jobs and media. The ignored `meeting_media` tests prepare a four-hour synthetic WAV and archive two hours of synthetic capture tracks. On Windows, the ignored `meeting_capture` test uses real microphone and loopback devices; coordinate first. Set `XTALK_MEETING_CAPTURE_SECONDS=7200` for the duration check; it mutes both retained sources after the opening synthetic sample. Do not run native capture tests concurrently. `live_meetings` is an explicitly authorized, billable synthetic provider check; inspect its environment requirements before running it.
+
+Meeting import admission precedes media preparation: the durable `importing` row is visible immediately, preparation runs behind the native import gate, and completion publishes audio/hash atomically. Startup marks interrupted imports failed without provider work. Keep navigation-during-import and failed-import card coverage in the native meeting suite.
+
+Meeting library and periodic job queries use derived metadata/expression indexes so indefinite text history does not reload all word evidence. Full records belong in detail/export and active work. Meeting data lives in its own `meetings` subdirectory and must never be cleared by dictation fixtures. Unknown paid submissions require explicit retry; known AssemblyAI IDs resume polling. Capture journals and admission journals preserve local recovery. JSON exports omit managed paths and provider upload URLs.
 
 Record the commands, operating system, build identity, and outcome. Test counts evolve: report the current results, not historical counts copied from SPEC. A Windows Server hosted test is not evidence for every Windows 10/11 device configuration.
 
@@ -125,7 +132,8 @@ Keep the Windows build checkout on a Windows drive, for example `C:\dev\x-talk`.
 
 - Designate one source checkout as authoritative. Copy source/configuration, assets, prompts, license files and required media resources; do not copy `.env` or unrelated scratch data.
 - Preserve each environment's own `node_modules` and Rust `target` directories for incremental builds. Do not share platform-specific dependency/build directories between Linux and Windows.
-- Do not synchronize files while the native compiler, packager, or tests are using them. After syncing, rebuild the affected executable before claiming to test the new source.
+- Run Rust desktop integration tests before building the UI acceptance executable: Cargo can replace `target/debug/x-talk.exe` with a binary using different features/configuration. Re-run `desktop:test-build` before WebDriver if a later Cargo test built that binary.
+- Do not synchronize files while the native compiler, packager, or tests are using them. After syncing, rebuild the affected executable before claiming to test the new source. Set `XTALK_GIT_COMMIT` to the source checkout’s eight-character Git revision (append `-dirty` for uncommitted builds) when building a mirror without Git metadata; do not substitute the source fingerprint. Git checkouts derive this automatically.
 - Do not assume a scratch workspace is a Git checkout or suitable for `scripts/release.py`. Final release packaging requires a clean, committed source checkout matching the build.
 - Keep local bootstrap/sync scripts in `.tmp/` and do not depend on a prior session's absolute paths, installed versions, or temporary helper scripts.
 - Check native `node --version` against the workflow pin (currently 24.11.1). An older Windows Node earlier on PATH can break WebDriver dependencies even when the WSL Node version is correct.
@@ -141,6 +149,7 @@ Use native Git/SSH if it already provides the authorized repository identity. Gi
 | Symptom | Check / established fix |
 | --- | --- |
 | WebDriver reports browser/driver version mismatch | Match **WebView2**, not merely the installed Edge browser. Run `scripts/install-webdriver.ps1`; it selects the runtime and sets `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`. Run tests in that shell so the setting is inherited. The runner uses an explicit `--native-driver` path to avoid another driver earlier on PATH. |
+| WebDriver treats a valid native result as an error | Wrap returned domain objects in `{ result: value }` inside `browser.execute` and unwrap afterward when the object has a top-level `error` field; preserve rejected IPC promises. |
 | Native `invoke` is undefined at test startup | Wait for the native bridge as the runner's `before` hook does; session creation alone does not establish readiness. |
 | Quit test fails immediately although the app exited | PowerShell's `Get-Process -ErrorAction SilentlyContinue` can leave an unsuccessful exit status for an already-gone PID. Retain the explicit successful `exit 0` after the guarded wait; a live process exceeding the timeout must still fail. |
 | Python notice generation fails on Windows | Use explicit UTF-8 for text I/O. CI runs notice generation with `-X warn_default_encoding -W error::EncodingWarning`. |

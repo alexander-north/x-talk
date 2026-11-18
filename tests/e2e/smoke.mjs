@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 async function command(name, args={}) { return browser.execute((name,args)=>window.__TAURI_INTERNALS__.invoke(name,args),name,args); }
 describe('Windows desktop application', () => {
- after(async()=>{const s=await command('state');await command('save_settings',{settings:{...s.settings,theme:'system',keep_audio:100,transform:false}});await $('button[aria-label="Recordings"]').click();mkdirSync('.tmp',{recursive:true});await browser.saveScreenshot('.tmp/acceptance-ui.png');});
+ after(async()=>{const s=await command('state');await command('save_settings',{settings:{...s.settings,theme:'system',keep_audio:100,transform:false}});await $('button[aria-label="Transcripts"]').click();mkdirSync('.tmp',{recursive:true});await browser.saveScreenshot('.tmp/acceptance-ui.png');});
  it('loads bundled UI and authoritative native state', async () => {
   await expect($('button[aria-label="Recorder"] img')).toHaveAttribute('alt','x-talk');
   const s=await command('state');

@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod jobs;
 pub mod media;
+pub mod meetings;
 pub mod providers;
 pub mod realtime;
 pub mod sounds;

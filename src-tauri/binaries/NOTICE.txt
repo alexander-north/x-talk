@@ -7,5 +7,5 @@ Corresponding source is the unchanged official archive; configure flags are in t
 These separate executables communicate through files and pipes.
 License: FFmpeg-LICENSE.txt
 
-ffmpeg.exe: 7c53bfb2ab0719eb081501669e45a3b0a2083deb46a79dc73ad58a1397105ec5
-ffprobe.exe: 6bb767e5bb31b3a0770580f58b25e9de35e49b4e4edd5e9ee3407f02865dfce1
+ffmpeg.exe: 15ab01b2a95b529bb032841425f96510d85f8da807233a55a4a6f7b460c6d5fa
+ffprobe.exe: 93148b7a0537924be062920d278e1b092a91cb0f249c8929c6348bb61b8064e7

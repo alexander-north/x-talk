@@ -1,6 +1,6 @@
 import type {Settings,Transformation,Model} from './types';
 export const providerNames:Record<string,string>={openai:'OpenAI',assemblyai:'AssemblyAI',elevenlabs:'ElevenLabs',deepgram:'Deepgram',anthropic:'Anthropic'};
-export const settingsSections=['General','Recording','API Keys','Providers','Transformation','Delivery and Sounds'];
+export const settingsSections=['General','Recording','Meetings','API Keys','Providers','Transformation','Delivery and Sounds'];
 export type SettingsChange=(current:Settings)=>Settings;
 export function settingsWriter(load:()=>Promise<Settings>,save:(settings:Settings)=>Promise<Settings>,updated:(settings:Settings)=>Promise<void>){
  let queue:Promise<unknown>=Promise.resolve();

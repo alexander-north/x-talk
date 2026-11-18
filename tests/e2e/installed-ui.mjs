@@ -24,7 +24,7 @@ describe('Installed release workspace',()=>{
   await expect($('button[aria-label="Start recording"]')).toExist();await expect($('header')).not.toExist();await expect($('footer')).not.toExist();
  });
  it('opens the persisted recordings table and executes its native full-library query',async()=>{
-  await $('button[aria-label="Recordings"]').click();await expect($('.recordings-table')).toExist();
+  await $('button[aria-label="Transcripts"]').click();await expect($('.recordings-table')).toExist();
   const result=await command('recordings',{query:{search:'',sort:'created',descending:true,offset:0}});
   if(!Array.isArray(result.entries)||typeof result.total!=='number')throw new Error('Recordings query failed');
   await expect($('input[aria-label="Search recordings"]')).toExist();await expect($('summary')).toHaveText('Columns');
@@ -46,7 +46,7 @@ describe('Installed release workspace',()=>{
   if(JSON.stringify((await command('state')).settings.sounds)!==JSON.stringify(state.settings.sounds))throw Error('Preview changed saved sound toggles');
   if(state.diagnostics.enabled){
    const log=()=>readdirSync(state.diagnostics.directory).filter(n=>n.endsWith('.log')&&n.includes(state.diagnostics.session.slice(0,8))).map(n=>readFileSync(path.join(state.diagnostics.directory,n),'utf8')).join('');
-   await browser.waitUntil(()=>log().split('\n').filter(l=>l.includes('cue_started')&&l.includes('sound_set="v7"')).length>=6,{timeout:5000});
+   await browser.waitUntil(()=>log().split('\n').filter(l=>l.includes('cue_started')&&l.includes('sound_set="v8"')).length>=6,{timeout:5000});
    if(log().includes('cue_playback_failed'))throw Error('Installed Windows playback failed');
   }
  });

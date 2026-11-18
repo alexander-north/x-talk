@@ -3,7 +3,7 @@ import {describe,it,expect} from 'vitest';
 const read=(path:string)=>readFileSync(new URL(path,import.meta.url),'utf8');
 describe('bundled UI native permissions',()=>{
  it('allows every frontend IPC command through the main window capability',()=>{
-  const ipc=read('./ipc.ts');
+  const ipc=read('./ipc.ts')+read('./meetings/ipc.ts');
   const commands=[...ipc.matchAll(/invoke(?:<[^\n]*?>)?\('([^']+)'/g)].map(match=>match[1]);
   expect(commands).toContain('shortcut_editing');
   const permission=read('../src-tauri/permissions/application.toml');

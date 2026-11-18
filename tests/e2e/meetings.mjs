@@ -1,0 +1,321 @@
+// Native media/storage/clipboard with deterministic providers and no microphone.
+import {browser,$,expect} from '@wdio/globals';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+import {mkdirSync,statSync,existsSync,writeFileSync,truncateSync,unlinkSync} from 'node:fs';
+// Wrap valid domain objects with an error field so WebDriver does not treat them as protocol errors.
+const command=async(name,args={})=>(await browser.execute(async(n,a)=>({result:await window.__TAURI_INTERNALS__.invoke(n,a)}),name,args)).result;
+const clipboard=()=>JSON.parse(execFileSync('powershell.exe',['-NoProfile','-Command','Get-Clipboard -Raw'],{encoding:'utf8'}));
+let id,view,hasAudioOutput;
+async function unavailablePlayback(start){
+ const dismiss=$('button[aria-label="Dismiss notification"]');if(await dismiss.isExisting())await dismiss.click();
+ await start();
+ await expect($('.toast')).toHaveText(expect.stringContaining('No output device is available.'));
+ await browser.waitUntil(async()=>(await command('playback_state'))===null);
+}
+describe('Meetings native acceptance',()=>{
+ it('imports video through the picker with an explicit first-track notice',async()=>{
+  const state=await command('state');if(!state.test_providers)throw Error('Requires isolated test providers');
+  hasAudioOutput=(await command('meeting_devices')).outputs.length>0;
+  console.log(`Meeting playback coverage: ${hasAudioOutput?'real output device':'explicit no-output error path'}`);
+  await $('button[aria-label="Meetings"]').click();
+  await $('button=Import recording').click();
+  await $('.drop-zone').click();
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',path.resolve('src-tauri/tests/fixtures/meeting-two-tracks.mkv')],{timeout:40000});
+  await expect($('.import-preview')).toHaveText(expect.stringContaining('Only the first audio track'));
+  await $('input[aria-label="Import meeting title"]').setValue('Project review');
+  mkdirSync('.tmp',{recursive:true});await browser.saveScreenshot('.tmp/meetings-import-dialog.png');
+  await browser.execute(()=>{const input=document.querySelector('input[aria-label="Import recording date"]');input.value='2026-10-19';input.dispatchEvent(new Event('input',{bubbles:true}));});
+  await $('button=Create Transcript and Brief').click();
+  await expect($('.meeting-card')).toBeDisplayed();
+  await browser.waitUntil(async()=>{const rows=await command('meetings_list');id=rows[0]?.id;if(!id)return false;view=await command('meeting_get',{id});return view.meeting.transcription_status==='complete';},{timeout:60000});
+  if(view.meeting.meeting_date?.value!=='2026-10-19')throw Error('Import date gained an invented time or was lost');
+  if(view.meeting.source!=='video'||!view.meeting.audio_available)throw Error('Video import lost audio provenance');
+  await $('button=Open recording ↗').click();
+  await expect($('.meeting-summary')).toHaveText('The speakers agreed to send an updated proposal tomorrow.');
+ });
+ it('copies full JSON from the brief, even when the transcript is filtered',async()=>{
+  await $('button=Copy meeting JSON').click();
+  const first=clipboard();
+  if(first.format!=='x-talk.meeting'||first.schema_version!==2||first.representation!=='compact'||first.transcript.turns.length!==2||!first.brief.content)throw Error('Incomplete JSON package');
+  if(JSON.stringify(first).includes('fixture.invalid'))throw Error('Provider URL leaked into JSON');
+  await $('button[role="tab"]=Transcript').click();
+  await $('input[aria-label="Search transcript"]').setValue('will send');
+  await $('button=Copy meeting JSON').click();
+  if(JSON.stringify(first)!==JSON.stringify(clipboard()))throw Error('Transcript filter changed exported JSON');
+ });
+ it('persists corrections, marks the brief stale, and supports chained review operations',async()=>{
+  view=await command('meeting_get',{id});
+  view=await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'correct',turn:'seg_1',correction:{text:'Send the revised proposal.',speaker:'A'}}});
+  if(!view.meeting.brief.stale)throw Error('Correction failed to stale the brief');
+  view=await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'name',speaker:'B',name:'Taylor'}});
+  view=await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'merge',from:'A',into:'B'}});
+  if(view.meeting.transcript.speakers.length!==1||view.meeting.transcript.speakers[0].name!=='Taylor')throw Error('Speaker merge/name projection failed');
+  view=await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'undo_merge'}});
+  if(view.meeting.transcript.speakers.length!==2)throw Error('Merge undo failed');
+  await command('meeting_copy',{id});
+  const saved=clipboard();
+  if(saved.transcript.turns[0].original_text===saved.transcript.turns[0].text)throw Error('Original evidence was replaced');
+ });
+ it('keeps meetings independent from dictation Clear All and refreshes a stale brief',async()=>{
+  await command('clear_recordings',{confirmed:true});
+  if((await command('meetings_list')).length!==1)throw Error('Dictation clear removed meetings');
+  view=await command('meeting_get',{id});
+  await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'retry',transcription:false}});
+  await browser.waitUntil(async()=>{view=await command('meeting_get',{id});return view.meeting.transcription_status==='complete'&&!view.meeting.brief.stale;},{timeout:30000});
+  await $('button[role="tab"]=Meeting brief').click();
+  mkdirSync('.tmp',{recursive:true});await browser.saveScreenshot('.tmp/meetings-review.png');
+ });
+ it('does not report a canceled audio download as saved',async()=>{
+  await $('button[role="tab"]=Details').click();
+  const dismiss=$('button[aria-label="Dismiss notification"]');if(await dismiss.isExisting())await dismiss.click();
+  await $('button=Download audio').click();
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Cancel'],{timeout:40000});
+  await $('button=Download audio').waitForEnabled();
+  const result=await browser.execute(()=>document.querySelector('.toast')?.textContent??'');
+  if(result.includes('Audio saved'))throw Error('Canceled download reported success');
+ });
+ it('downloads only audio and plays from a transcript timestamp',async()=>{
+  await $('button[role="tab"]=Details').click();
+  mkdirSync('.tmp',{recursive:true});
+  // The native command returns the selected path; don't assume a specific
+  // Windows shell default folder or automate a version-dependent filename field.
+  await browser.execute(id=>{
+   window.__downloadOutcome=null;
+   window.__TAURI_INTERNALS__.invoke('meeting_download',{id}).then(path=>window.__downloadOutcome={path},error=>window.__downloadOutcome={error});
+  },id);
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Accept'],{timeout:40000});
+  await browser.waitUntil(()=>browser.execute(()=>window.__downloadOutcome!==null),{timeout:15000});
+  const outcome=await browser.execute(()=>window.__downloadOutcome);
+  if(outcome.error)throw Error(JSON.stringify(outcome.error));
+  const destination=outcome.path;
+  if(!destination||path.basename(destination)!==`meeting-${id.slice(0,8)}.m4a`||!existsSync(destination)||!statSync(destination).size)throw Error('Download did not return the saved audio file');
+  const packagedProbe=path.resolve(process.env.XTALK_APP_PATH?path.join(path.dirname(process.env.XTALK_APP_PATH),'binaries/ffprobe.exe'):'src-tauri/binaries/ffprobe.exe');
+  const probe=JSON.parse(execFileSync(existsSync(packagedProbe)?packagedProbe:path.resolve('src-tauri/binaries/ffprobe.exe'),['-v','error','-show_entries','stream=codec_type','-of','json',destination],{encoding:'utf8'}));
+  if(probe.streams.some(stream=>stream.codec_type==='video'))throw Error('Downloaded video instead of audio');
+  unlinkSync(destination);
+  if(!hasAudioOutput){await unavailablePlayback(()=>command('meeting_play',{id,start:1}));return;}
+  await command('meeting_play',{id,start:1});
+  const playback=await command('playback_state');
+  if(playback?.id!==`meeting:${id}`)throw Error('Meeting playback was not admitted');
+  await command('stop_playback');
+ });
+ it('uses the shared player, toast feedback and returns from other views to all meetings',async()=>{
+  await $('button[role="tab"]=Details').click();
+  if(hasAudioOutput){
+  await $('.meeting-audio button[aria-label="Play audio"]').click();
+  await $('.meeting-audio button[aria-label="Pause audio"]').click();
+  await browser.waitUntil(async()=>(await command('playback_state'))?.paused===true,{timeout:5000});
+  await browser.execute(()=>{const input=document.querySelector('.meeting-audio input');input.value='1';input.dispatchEvent(new Event('change',{bubbles:true}));});
+  await browser.waitUntil(async()=>{const p=await command('playback_state');return p?.paused&&Math.abs(p.position-1)<0.2;},{timeout:5000});
+  await command('stop_playback');
+  }else await unavailablePlayback(()=>$('.meeting-audio button[aria-label="Play audio"]').click());
+  await $('button[role="tab"]=Manage speakers').click();
+  await $('.speaker-row:first-of-type button').click();
+  await expect($('.toast')).toHaveText(expect.stringContaining('Saved'));
+  await $('button[aria-label="Dismiss notification"]').click();
+  await expect($('.toast')).not.toExist();
+  await browser.saveScreenshot('.tmp/meetings-speakers-polished.png');
+  await $('button[aria-label="Settings"]').click();
+  await $('button[aria-label="Meetings"]').click();
+  await expect($('.meeting-library')).toBeDisplayed();
+  await expect($('button=Record a meeting')).not.toExist();
+  await expect($('.meeting-capture')).not.toExist();
+  await $('button=Open recording ↗').click();
+  await expect($('button=Record a meeting')).not.toExist();
+  await $('button[aria-label="Recorder"]').click();
+  await $('button[aria-label="Meetings"]').click();
+  await expect($('.meeting-library')).toBeDisplayed();
+  await $('button=Open recording ↗').click();
+ });
+ it('replaces a transcript atomically and preserves a manual title',async()=>{
+  view=await command('meeting_get',{id});
+  const previous=view.meeting.transcript.generation;
+  view=await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'metadata',title:'Meeting acceptance review',call_at:view.meeting.call_at}});
+  view=await command('meeting_edit',{id,revision:view.meeting.revision,edit:{kind:'retry',transcription:true}});
+  if(view.meeting.transcript.generation!==previous)throw Error('Retry cleared the old transcript before success');
+  await browser.waitUntil(async()=>{view=await command('meeting_get',{id});return view.meeting.transcription_status==='complete'&&view.meeting.transcript.generation!==previous;},{timeout:60000});
+  if(view.meeting.title!=='Meeting acceptance review')throw Error('Generated brief replaced manual title');
+  if(view.meeting.transcript.turns[0].text!==view.meeting.transcript.turns[0].original_text)throw Error('Replacement retained stale correction');
+  await command('meeting_copy',{id});
+  const exported=clipboard();
+  if(exported.brief.actual_model!=='fixture-brief')throw Error('Missing actual brief model provenance');
+  await $('button=All meetings').click();
+  await $('button=Copy meeting JSON').click();
+  if(JSON.stringify(exported)!==JSON.stringify(clipboard()))throw Error('Library copy differs from detail copy');
+ });
+
+ it('keeps review controls visible and renames a speaker while editing a turn',async()=>{
+  await $('button=Open recording ↗').click();
+  await $('button[role="tab"]=Transcript').click();
+  await expect($('.meeting-review-toolbar .audio-player')).toBeDisplayed();
+  await expect($('input[type="checkbox"]')).not.toExist();
+  const aligned=await browser.execute(()=>{const field=document.querySelector('input[aria-label="Search transcript"]'),icon=field.parentElement.querySelector('svg');const a=field.getBoundingClientRect(),b=icon.getBoundingClientRect();return a.left>b.left&&Math.abs((a.top+a.bottom-b.top-b.bottom)/2)<5;});
+  if(!aligned)throw Error('Transcript search is not aligned with its icon');
+  await $('#turn-seg_1').$('button[aria-label="Edit turn"]').click();
+  await $('select[aria-label="Turn speaker"]').selectByAttribute('value','B');
+  await expect($('input[aria-label="Turn speaker name"]')).toHaveValue('Speaker B');
+  await $('input[aria-label="Turn speaker name"]').setValue('Morgan');
+  await $('button=Save').click();
+  view=await command('meeting_get',{id});
+  if(view.meeting.transcript.turns[0].speaker_id!=='B'||view.meeting.transcript.speakers.find(s=>s.id==='B')?.name!=='Morgan')throw Error('Turn reassignment and speaker rename were not saved together');
+  const revision=view.meeting.revision;
+  const rejected=await browser.execute(async(id,revision)=>{try{await window.__TAURI_INTERNALS__.invoke('meeting_edit',{id,revision,edit:{kind:'correct',turn:'seg_1',correction:{text:'Must not be saved',speaker:'A'},speaker_name:''}});return false;}catch{return true;}},id,revision);
+  if(!rejected||(await command('meeting_get',{id})).meeting.revision!==revision)throw Error('Invalid rename partially saved the correction');
+  await $('#turn-seg_1').$('button=Restore original turn').click();
+  await $('#turn-seg_1 .meeting-card-heading > button').waitForEnabled();
+  if(hasAudioOutput){
+  await $('#turn-seg_1 .meeting-card-heading > button').click();
+  await expect($('.meeting-audio button[aria-label="Pause audio"]')).toBeDisplayed();
+  await $('.meeting-audio button[aria-label="Pause audio"]').click();
+  if(!(await command('playback_state'))?.paused)throw Error('Timestamp playback could not be paused from the shared toolbar');
+  await command('stop_playback');
+  }else await unavailablePlayback(()=>$('#turn-seg_1 .meeting-card-heading > button').click());
+  for(const tab of ['Transcript','Meeting brief']){
+   await $(`button[role="tab"]=${tab}`).click();
+   const result=await browser.execute(()=>{
+    const region=document.querySelector('.panel-scroll'),bar=document.querySelector('.meeting-review-toolbar'),panel=document.querySelector('.meeting-panel');
+    const top=bar.getBoundingClientRect().top;
+    const filler=document.createElement('div');filler.style.height='2400px';region.append(filler);region.scrollTop=700;
+    const result={scroll:region.scrollTop,stable:Math.abs(top-bar.getBoundingClientRect().top)<2,bottom:panel.getBoundingClientRect().bottom,height:innerHeight,player:document.querySelector('.meeting-audio').clientWidth,toolbar:bar.clientWidth};
+    filler.remove();return result;
+   });
+   if(result.scroll<650||!result.stable||result.bottom>result.height||Math.abs(result.player-result.toolbar)>2)throw Error(`Contained review layout failed: ${JSON.stringify(result)}`);
+  }
+  await browser.saveScreenshot('.tmp/meetings-contained-scroll.png');
+  await $('button[role="tab"]=Details').click();
+  await expect($('button=Save details')).toBeDisplayed();
+  await $('button[aria-label="Settings"]').click();
+  const state=await command('state');
+  await expect($('.settings .eyebrow')).toHaveText(`Xtalk ${state.diagnostics.version} · ${state.diagnostics.commit}`);
+  if(!/^[0-9a-f]{8}(-dirty)?$/.test(state.diagnostics.commit))throw Error('Missing source commit identity');
+  await $('button[aria-label="Meetings"]').click();
+ });
+ it('moves both libraries below the divider and keeps its settings independent',async()=>{
+  const nav=await browser.execute(()=>Array.from(document.querySelector('.nav-rail').children).slice(0,5).map(el=>el.getAttribute('aria-label')||el.className));
+  if(nav.join('|')!=='Recorder|rail-divider|Transcripts|Meetings|Settings')throw Error('Navigation order is incorrect');
+  await $('button[aria-label="Settings"]').click();
+  await $('nav[aria-label="Settings sections"]').$('button=Meetings').click();
+  await expect($('select[aria-label="Meeting transcription provider"]')).toHaveValue('assemblyai');
+  const old=(await command('state')).settings.keep_audio;
+  await $('input[aria-label="Meeting audio retention"]').setValue('7');
+  await $('h2.settings-section-title').click();
+  await browser.waitUntil(async()=>await command('meeting_retention')===7,{timeout:5000});
+  if((await command('state')).settings.keep_audio!==old)throw Error('Meeting retention changed dictation');
+  await $('button[aria-label="Meetings"]').click();
+  await $('button[aria-label="Recorder"]').click();
+  await $('.recorder-modes').$('button=Meeting').click();
+  await expect($('select[aria-label="Meeting microphone"]')).toBeDisplayed();
+  await expect($('select[aria-label="Meeting system output"]')).toBeDisplayed();
+  await expect($('button[aria-label="Start meeting recording"]')).toBeEnabled();
+  const bottom=await browser.execute(()=>{const toggle=document.querySelector('.recorder-modes').getBoundingClientRect(),main=document.querySelector('.meeting-recorder').getBoundingClientRect();return toggle.top>=main.bottom-1&&toggle.bottom<=innerHeight;});
+  if(!bottom)throw Error('Recording mode toggle is not anchored below the recorder');
+  await browser.saveScreenshot('.tmp/meeting-recorder.png');
+  await $('.recorder-modes').$('button=Dictation').click();
+  await expect($('button[aria-label="Start recording"]')).toBeDisplayed();
+  await $('button[aria-label="Meetings"]').click();
+ });
+ it('admits a background import immediately and preserves it across navigation',async()=>{
+  const back=$('button=All meetings');if(await back.isExisting())await back.click();
+  await expect($('.meeting-library')).toBeDisplayed();
+  mkdirSync('.tmp',{recursive:true});const file=path.resolve('.tmp/background-meeting.wav');
+  const bytes=16000*2*1800,header=Buffer.alloc(44);
+  header.write('RIFF',0);header.writeUInt32LE(bytes+36,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(16000,24);header.writeUInt32LE(32000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(bytes,40);
+  writeFileSync(file,header);truncateSync(file,bytes+44);
+  const preview=await command('meeting_preview',{path:file});
+  const start=Date.now();const imported=await command('meeting_import',{token:preview.token,title:'Background import',callAt:'2026-10-01T12:00:00Z'});
+  if(Date.now()-start>2000)throw Error('Import waited for media preparation');
+  const initial=await command('meeting_get',{id:imported});
+  if(initial.meeting.transcription_status==='failed')throw Error('Background import failed');
+  await $('button[aria-label="Recorder"]').click();await $('button[aria-label="Meetings"]').click();
+  await expect($('.meeting-library')).toHaveText(expect.stringContaining('Background import'));
+  await browser.waitUntil(async()=>(await command('meeting_get',{id:imported})).meeting.transcription_status==='complete',{timeout:60000});
+  const saved=(await command('meeting_get',{id:imported})).meeting;
+  if(saved.call_at!=='2026-10-01T12:00:00Z'||saved.title!=='Background import')throw Error('Import metadata was lost');
+  unlinkSync(file);
+  await browser.waitUntil(async()=>await browser.execute(()=>Array.from(document.querySelectorAll('.meeting-card')).find(card=>card.querySelector('.meeting-title')?.textContent==='Background import')?.querySelector('.badge')?.textContent==='Ready'),{timeout:5000});
+  await browser.saveScreenshot('.tmp/meetings-cards.png');
+ });
+ it('keeps failed imports visible with a useful error',async()=>{
+  const file=path.resolve('.tmp/missing-meeting.wav');
+  const bytes=Buffer.alloc(44+32000);bytes.write('RIFF',0);bytes.writeUInt32LE(bytes.length-8,4);bytes.write('WAVEfmt ',8);bytes.writeUInt32LE(16,16);bytes.writeUInt16LE(1,20);bytes.writeUInt16LE(1,22);bytes.writeUInt32LE(16000,24);bytes.writeUInt32LE(32000,28);bytes.writeUInt16LE(2,32);bytes.writeUInt16LE(16,34);bytes.write('data',36);bytes.writeUInt32LE(32000,40);writeFileSync(file,bytes);
+  const preview=await command('meeting_preview',{path:file});unlinkSync(file);
+  const imported=await command('meeting_import',{token:preview.token,title:'Interrupted source'});
+  await browser.waitUntil(async()=>(await command('meeting_get',{id:imported})).meeting.transcription_status==='failed',{timeout:15000});
+  const failed=await command('meeting_get',{id:imported});
+  if(!failed.error||failed.meeting.audio_available)throw Error('Import failure was hidden');
+  await expect($('.meeting-library')).toHaveText(expect.stringContaining('Interrupted source'));
+ });
+
+ it('paginates cards, searches all meetings, and clamps after deletion',async()=>{
+  await $('button[aria-label="Recorder"]').click();await $('button[aria-label="Meetings"]').click();
+  for(let i=0;i<26;i++){
+   const file=path.resolve(`.tmp/page-${i}.wav`),wav=Buffer.alloc(44+32000);
+   wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(32000,40);wav.writeInt16LE(i+1,44);writeFileSync(file,wav);
+   const preview=await command('meeting_preview',{path:file});await command('meeting_import',{token:preview.token,title:`Page fixture ${String(i).padStart(2,'0')}`,callAt:null});
+  }
+  await $('input[aria-label="Search meetings"]').setValue('Page fixture');
+  await $('select[aria-label="Meetings per page"]').selectByAttribute('value','25');
+  await browser.waitUntil(async()=>await browser.execute(()=>document.querySelectorAll('.meeting-card').length)===25);
+  await $('button[aria-label="Next meetings page"]').click();
+  await expect($('.pagination')).toHaveText(expect.stringContaining('26–26 of 26'));
+  const rows=(await command('meetings_list')).filter(r=>r.title.startsWith('Page fixture'));
+  const last=rows.at(-1);await browser.waitUntil(async()=>['complete','failed'].includes((await command('meeting_get',{id:last.id})).meeting.transcription_status),{timeout:60000});
+  const detail=await command('meeting_get',{id:last.id});await command('meeting_delete',{id:last.id,revision:detail.meeting.revision});
+  await expect($('.pagination')).toHaveText(expect.stringContaining('1–25 of 25'));
+  await $('input[aria-label="Search meetings"]').setValue(rows[0].title);
+  await expect($('.pagination')).toHaveText(expect.stringContaining('1–1 of 1'));
+  await $('input[aria-label="Search meetings"]').setValue('Page fixture');
+  await $('select[aria-label="Meetings per page"]').selectByAttribute('value','50');
+  await expect($('button[aria-label="Next meetings page"]')).toBeDisabled();
+ });
+ it('keeps both recorder modes within the pane across window heights',async()=>{
+  await $('button[aria-label="Recorder"]').click();
+  try{for(const mode of ['Dictation','Meeting']){
+   await $('.recorder-modes').$(`button=${mode}`).click();
+   for(const width of [520,1000])for(const height of [460,520,600,649,651,710,730,780,900,1080]){
+    await browser.setWindowSize(width,height);await browser.pause(100);
+    const layout=await browser.execute(()=>{const main=document.querySelector('.recording-home'),orb=main.querySelector('.record-orbit').getBoundingClientRect(),body=main.getBoundingClientRect(),toggle=document.querySelector('.recorder-modes').getBoundingClientRect(),content=main.querySelector('.home-outputs,.meeting-sources')?.getBoundingClientRect();return {contentTop:content?.top??body.bottom,overflow:main.scrollHeight-main.clientHeight,orbTop:orb.top,orbBottom:orb.bottom,top:body.top,bottom:body.bottom,toggleBottom:toggle.bottom,height:innerHeight};});
+    if(layout.overflow>1||layout.orbTop<layout.top||layout.orbBottom>layout.bottom||layout.orbBottom>layout.contentTop||layout.toggleBottom>layout.height)throw Error(`Recorder overflow ${mode} ${width}×${height}: ${JSON.stringify(layout)}`);
+   }
+  }}finally{await browser.setWindowSize(1100,800);}
+ });
+
+ it('imports a meeting from the shared recorder footer and opens its detail',async()=>{
+  await $('button[aria-label="Recorder"]').click();
+  await $('.recorder-modes').$('button=Meeting').click();
+  const footer=await browser.execute(()=>{const row=document.querySelector('.recorder-bottom'),items=[...row.children].map(e=>e.getBoundingClientRect());return items.every(r=>Math.abs((r.top+r.bottom)/2-(items[0].top+items[0].bottom)/2)<2);});
+  if(!footer)throw Error('Recorder footer does not share one baseline');
+  await expect($('.monitoring-status')).not.toExist();
+  await expect($('.source-help')).not.toExist();
+  await expect($('.level-meter:has(meter[aria-label="Microphone level"])')).toHaveText(expect.stringContaining('-60 dBFS'));
+  const file=path.resolve('.tmp/recorder-import.wav'),wav=Buffer.alloc(44+32000);
+  wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(32000,40);wav.writeInt16LE(999,44);writeFileSync(file,wav);
+  await $('button=Import audio').click();await $('.drop-zone').click();
+  execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(new URL('../../scripts/native-dialog.ps1',import.meta.url)),'-Path',file],{timeout:40000});
+  await $('input[aria-label="Import meeting title"]').setValue('Recorder import');
+  await $('button=Create Transcript and Brief').click();
+  await expect($('.meetings-page.detail-view h1')).toHaveText('Recorder import');
+ });
+
+ it('copies compact turns by default, detailed evidence on demand, and honest meeting dates',async()=>{
+  const rows=await command('meetings_list');const target=rows.find(row=>row.title==='Recorder import');
+  await browser.waitUntil(async()=>(await command('meeting_get',{id:target.id})).meeting.transcription_status==='complete',{timeout:30000});
+  await $('button[role="tab"]=Details').click();
+  await $('button=Copy detailed JSON').click();const detailed=clipboard();
+  if(detailed.representation!=='detailed'||!('original_words' in detailed.transcript.turns[0]))throw Error('Missing detailed evidence');
+  if(detailed.dates.meeting!==null)throw Error('Import silently invented a meeting date');
+  await $('button=Copy meeting JSON').click();const compact=clipboard();
+  if('original_words' in compact.transcript.turns[0]||'original_text' in compact.transcript.turns[0])throw Error('Default export contains redundant evidence');
+  if(compact.transcript.turns[0].text!==detailed.transcript.turns[0].text)throw Error('Compact export lost spoken text');
+  if(compact.brief.origin!=='ai_generated'||!compact.brief.content.summary_segment_ids.length)throw Error('Brief provenance or citations missing');
+  const current=await command('meeting_get',{id:target.id});
+  const changed=await command('meeting_edit',{id:target.id,revision:current.meeting.revision,edit:{kind:'metadata',title:target.title,call_at:'2026-10-19'}});
+  await command('meeting_copy',{id:target.id});const dated=clipboard();
+  if(dated.dates.meeting.value!=='2026-10-19'||dated.dates.meeting.timezone!==null||dated.dates.meeting.source!=='user_entered')throw Error('Date precision/provenance lost');
+  await command('meeting_edit',{id:target.id,revision:changed.meeting.revision,edit:{kind:'metadata',title:target.title,call_at:''}});
+  await command('meeting_copy',{id:target.id});if(clipboard().dates.meeting!==null)throw Error('Could not clear uncertain meeting date');
+ });
+
+});

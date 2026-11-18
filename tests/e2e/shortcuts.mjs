@@ -25,7 +25,7 @@ describe('Shortcut editor',()=>{
   const input=$('input[aria-label="Toggle recording shortcut"]');
   for(const invalid of ['not-a-shortcut','Control+Alt+Shift+F9']){
    await input.setValue(invalid);await $('button=Save').click();
-   await expect($('.error-text')).toBeDisplayed();await expect(input).toBeDisplayed();
+   await expect($('.toast-error')).toBeDisplayed();await expect(input).toBeDisplayed();
    if(JSON.stringify(await binding())!==JSON.stringify(original))throw Error('Rejected save changed shortcuts');
   }
   await $('button=Cancel').click();

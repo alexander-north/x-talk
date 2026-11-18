@@ -24,6 +24,13 @@ pub struct PresetTest {
     pub reply: oneshot::Sender<Result<String>>,
 }
 pub struct AppState {
+    pub meeting_capture: Mutex<Option<Arc<crate::meetings::capture::Session>>>,
+    pub meeting_monitor: Mutex<Option<crate::meetings::capture::Monitor>>,
+    pub meeting_active: AtomicBool,
+    pub meetings: crate::meetings::store::MeetingStore,
+    pub meetings_wake: Arc<Notify>,
+    pub meeting_import: Mutex<Option<crate::meetings::commands::PendingImport>>,
+    pub meeting_import_gate: tokio::sync::Mutex<()>,
     pub store: Store,
     pub cues: crate::cues::CuePlayer,
     pub capture: Capture,
@@ -72,7 +79,8 @@ impl Feedback for DesktopFeedback {
     }
     fn sound_in_context(&self, e: &str, context: Option<u64>) {
         if let Some(s) = self.app.try_state::<AppState>() {
-            if !s.shutting_down.load(Ordering::Acquire) {
+            if !s.shutting_down.load(Ordering::Acquire) && !s.meeting_active.load(Ordering::Acquire)
+            {
                 s.cues.submit(e, false, context);
             }
         }
@@ -97,19 +105,17 @@ impl CaptureFeedback for DesktopFeedback {
         if let Some(s) = self.app.try_state::<AppState>() {
             if e == "idle" {
                 s.cues.idle();
-            } else if !s.shutting_down.load(Ordering::Acquire) {
+            } else if !s.shutting_down.load(Ordering::Acquire)
+                && !s.meeting_active.load(Ordering::Acquire)
+            {
                 s.cues.submit(e, false, None);
             }
         }
-        let active = e == "started";
-        if let Some(tray) = self.app.tray_by_id("main") {
-            let _ = tray.set_icon(Some(tray_image(active)));
-            let _ = tray.set_tooltip(Some(if active {
-                "x-talk · Recording"
-            } else {
-                "x-talk · Ready"
-            }));
-        }
+        let meeting = self
+            .app
+            .try_state::<AppState>()
+            .is_some_and(|s| s.meeting_active.load(Ordering::Acquire));
+        recording_indicator(&self.app, e == "started", meeting);
     }
     fn queued(&self) {
         self.wake.notify_one();
@@ -138,7 +144,40 @@ pub fn configuration_changed(app: &tauri::AppHandle) {
 pub fn changed(app: &tauri::AppHandle) {
     let _ = app.emit("state-changed", ());
 }
-fn tray_image(active: bool) -> tauri::image::Image<'static> {
+pub(crate) fn recording_indicator(app: &tauri::AppHandle, dictation: bool, meeting: bool) {
+    let active = dictation || meeting;
+    let label = if meeting {
+        "Recording meeting"
+    } else if dictation {
+        "Recording"
+    } else {
+        "Ready"
+    };
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_icon(Some(tray_image(active)));
+        let _ = tray.set_tooltip(Some(format!("x-talk · {label}")));
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let base = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|w| w.label == "main")
+            .map(|w| w.title.as_str())
+            .unwrap_or("x-talk");
+        let title = if active {
+            format!("{base} · {label}")
+        } else {
+            base.to_owned()
+        };
+        let _ = window.set_title(&title);
+        let _ = window.set_icon(tray_image(active));
+        #[cfg(target_os = "windows")]
+        let _ = window.set_overlay_icon(active.then(|| tray_image(true)));
+    }
+}
+pub(crate) fn tray_image(active: bool) -> tauri::image::Image<'static> {
     if !active {
         return tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
             .expect("bundled app icon");
@@ -150,7 +189,7 @@ fn tray_image(active: bool) -> tauri::image::Image<'static> {
             let inside = (x as i32 - 16).pow(2) + (y as i32 - 16).pow(2) < 170;
             if inside {
                 data[idx..idx + 4].copy_from_slice(if active {
-                    &[240, 75, 87, 255]
+                    &[255, 145, 32, 255]
                 } else {
                     &[75, 197, 153, 255]
                 });
@@ -161,7 +200,10 @@ fn tray_image(active: bool) -> tauri::image::Image<'static> {
 }
 pub fn play_sound(app: &tauri::AppHandle, event: &str, preview: bool) -> Result<()> {
     let s = app.state::<AppState>();
-    if s.shutting_down.load(Ordering::Acquire) || !s.cues.submit(event, preview, s.cues.context()) {
+    if s.meeting_active.load(Ordering::Acquire)
+        || s.shutting_down.load(Ordering::Acquire)
+        || !s.cues.submit(event, preview, s.cues.context())
+    {
         return Err(AppError::input(
             "Sound previews are unavailable while recording or closing.",
         ));
@@ -412,7 +454,20 @@ pub fn run() {
                 feedback,
             };
             let tests = Arc::new(Mutex::new(None::<PresetTest>));
+            let meetings = crate::meetings::store::MeetingStore::open(&root.join("meetings"))?;
+            let meeting_provider: Arc<dyn crate::meetings::providers::MeetingProvider> = Arc::new(Providers::new(keys.clone())?);
+            #[cfg(feature = "test-providers")]
+            let meeting_provider: Arc<dyn crate::meetings::providers::MeetingProvider> = if crate::test_support::enabled() {
+                Arc::new(crate::test_support::TestProviders)
+            } else { meeting_provider };
             app.manage(AppState {
+                meeting_capture: Mutex::new(None),
+                meeting_monitor: Mutex::new(None),
+                meeting_active: AtomicBool::new(false),
+                meetings: meetings.clone(),
+                meetings_wake: Arc::new(Notify::new()),
+                meeting_import: Mutex::new(None),
+                meeting_import_gate: tokio::sync::Mutex::new(()),
                 store: store.clone(),
                 cues: crate::cues::CuePlayer::new(store.clone())?,
                 capture,
@@ -434,6 +489,7 @@ pub fn run() {
                 shortcut_error: Mutex::new(None),
                 shortcut_editing: AtomicBool::new(false),
             });
+            crate::meetings::commands::start_worker(app.handle().clone(), meetings, meeting_provider);
             crate::updates::start(app.handle());
             let settings = store.settings()?;
             if let Err(e) = shortcuts(app.handle(), None, &settings.shortcuts) {
@@ -455,6 +511,7 @@ pub fn run() {
                 ("open", "Open x-talk"),
                 ("toggle", "Start / stop recording"),
                 ("stop", "Stop recording"),
+                ("stop-meeting", "Stop and save meeting"),
                 ("cancel", "Cancel current operation"),
                 ("quit", "Quit x-talk"),
             ] {
@@ -467,6 +524,14 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => show(app),
+                    "stop-meeting" => {
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(error) = crate::meetings::commands::meeting_stop(handle.clone(), false).await {
+                                let _ = handle.emit("playback-error", error);
+                            }
+                        });
+                    },
                     "toggle" | "stop" | "cancel" => trigger(app, e.id().as_ref()),
                     "quit" => {
                         show(app);
@@ -551,6 +616,25 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            crate::meetings::commands::meeting_play,
+            crate::meetings::commands::meeting_devices,
+            crate::meetings::commands::meeting_monitor,
+            crate::meetings::commands::meeting_capture_status,
+            crate::meetings::commands::meeting_start,
+            crate::meetings::commands::meeting_stop,
+            crate::meetings::commands::meeting_mute,
+            crate::meetings::commands::meeting_change_device,
+            crate::meetings::commands::meetings_list,
+            crate::meetings::commands::meeting_get,
+            crate::meetings::commands::meeting_pick,
+            crate::meetings::commands::meeting_preview,
+            crate::meetings::commands::meeting_import,
+            crate::meetings::commands::meeting_edit,
+            crate::meetings::commands::meeting_copy,
+            crate::meetings::commands::meeting_download,
+            crate::meetings::commands::meeting_delete,
+            crate::meetings::commands::meeting_retention,
+            crate::meetings::commands::meeting_set_retention,
             crate::commands::state,
             crate::commands::shortcut_editing,
             crate::commands::progress,

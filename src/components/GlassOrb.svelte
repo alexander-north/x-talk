@@ -3,7 +3,7 @@
  import Icon from './Icon.svelte';
  import type {OrbPhase} from '../recorder-state';
  import {paintOrb} from '../orb-art';
- let {phase,spectrum=[],timer='0:00',disabled=false,label,activate}:{phase:OrbPhase;spectrum?:number[];timer?:string;disabled?:boolean;label:string;activate:()=>void}=$props();
+ let {variant='dictation',phase,spectrum=[],previewActivity=false,timer='0:00',disabled=false,label,activate}:{variant?:'dictation'|'meeting';phase:OrbPhase;spectrum?:number[];previewActivity?:boolean;timer?:string;disabled?:boolean;label:string;activate:()=>void}=$props();
  let canvas:HTMLCanvasElement;
  onMount(()=>{
   const context=canvas.getContext('2d');if(!context)return;
@@ -11,13 +11,15 @@
   const smoothed=Array(48).fill(0);
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
   const outgoing=document.createElement('canvas');
-  let blend=1,paintedReduced:boolean|null=null;
+  let blend=1,paintedReduced:boolean|null=null,paintedLive=false;
   // Skip frames that would repaint identical pixels (reduced motion) or that the slow idle/complete art does not need (~30 fps cap).
   // Phase changes, size changes, motion-preference changes, and cross-fades always paint; `last` only advances on painted frames.
   function skip(now:number,width:number,reduced:boolean){
-   if(previous!==phase||blend<1||width!==canvas.width||reduced!==paintedReduced)return false;
-   if(reduced)return phase!=='recording';
-   return (phase==='idle'||phase==='complete')&&now-last<1000/30-4;
+   // A meeting's idle level preview is live audio, so it paints like a recording.
+   const live=phase==='recording'||variant==='meeting'&&previewActivity&&phase==='idle';
+   if(previous!==phase||blend<1||width!==canvas.width||reduced!==paintedReduced||live!==paintedLive)return false;
+   if(reduced)return !live;
+   return !live&&(phase==='idle'||phase==='complete')&&now-last<1000/30-4;
   }
   function paint(now:number,width:number,reduced:boolean){
    const dt=Math.min((now-last)/1000||0,0.05);last=now;
@@ -31,13 +33,13 @@
     const targetShape=phase==='transforming'?1:0;
     shape=reduced?targetShape:shape+(targetShape-shape)*(1-Math.exp(-dt*9));
     for(let i=0;i<48;i++){
-     const target=phase==='recording'?(spectrum[i]??0):0;
+     const target=(phase==='recording'||previewActivity&&phase==='idle')?(spectrum[i]??0):0;
      smoothed[i]+=(target-smoothed[i])*(1-Math.exp(-dt*(target>smoothed[i]?22:8)));
     }
     if(canvas.width!==width){canvas.width=width;canvas.height=canvas.width;}
     context!.setTransform(canvas.width/440,0,0,canvas.width/440,0,0);
-    paintOrb(context!,phase,reduced?0:time,smoothed,reduced,shape);
-    paintedReduced=reduced;
+    paintOrb(context!,phase,reduced?0:time,smoothed,reduced,shape,variant==='meeting',previewActivity);
+    paintedReduced=reduced;paintedLive=phase==='recording'||variant==='meeting'&&previewActivity&&phase==='idle';
     blend=Math.min(1,blend+dt/.55);
     if(blend<1&&outgoing.width){context!.save();context!.setTransform(1,0,0,1,0,0);context!.globalAlpha=1-blend*blend*(3-2*blend);context!.drawImage(outgoing,0,0,canvas.width,canvas.height);context!.restore();}
    }else paintedReduced=null;// Force a repaint once visible, in case the phase changed while hidden.
