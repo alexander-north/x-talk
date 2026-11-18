@@ -36,15 +36,11 @@ struct Journal {
 }
 pub enum Action {
     Start {
-        snapshot: Snapshot,
+        snapshot: Box<Snapshot>,
         device: Option<String>,
     },
     Stop,
     Cancel,
-    Toggle {
-        snapshot: Snapshot,
-        device: Option<String>,
-    },
 }
 struct Request {
     action: Action,
@@ -141,31 +137,7 @@ impl Capture {
                                     } else {
                                         start(
                                             &store,
-                                            snapshot,
-                                            device,
-                                            spectrum.clone(),
-                                            streaming.clone(),
-                                            shared.clone(),
-                                            feedback.clone(),
-                                        )
-                                        .map(|s| {
-                                            if let Ok(mut state) = shared.lock() {
-                                                state.active = true;
-                                                state.started = Some(now());
-                                                state.error = None;
-                                            }
-                                            session = Some(s);
-                                            feedback.event("started");
-                                        })
-                                    }
-                                }
-                                Action::Toggle { snapshot, device } => {
-                                    if let Some(s) = session.take() {
-                                        finish(&store, s, false, feedback.as_ref())
-                                    } else {
-                                        start(
-                                            &store,
-                                            snapshot,
+                                            *snapshot,
                                             device,
                                             spectrum.clone(),
                                             streaming.clone(),
@@ -254,7 +226,6 @@ impl Capture {
             Action::Start { .. } => "start",
             Action::Stop => "stop",
             Action::Cancel => "cancel",
-            Action::Toggle { .. } => "toggle",
         };
         let started = Instant::now();
         tracing::info!(action = name, "capture_action_requested");

@@ -20,10 +20,10 @@
  let view=$state('record');
  let error=$state('');let notice=$state('');let busy=$state(false);let captureBusy=$state(false);let loading=$state(true);
  let settingsView=$state<SettingsView>();let pendingAction:(()=>void|Promise<void>)|null=null;
- let confirm=$state<'delete'|'clear'|'quit'|'discard'|'edit'|'text'|'unsaved'|null>(null);
+ let confirm=$state<'delete'|'clear'|'quit'|'discard'|'edit'|'text'|'unsaved'|'retry'|null>(null);
  let title=$state('');let transcript=$state('');let textKind=$state<'transcript'|'transformed'>('transcript');
  let dialog=$state<HTMLDialogElement>();let clock=$state(Date.now());let refreshKey=$state(0);let compact=$state(false);let fullscreen=$state(false);let prefersDark=$state(false);let playback=$state<Playback|null>(null);
- let noticeTimer:ReturnType<typeof setTimeout>;
+ let noticeTimer:ReturnType<typeof setTimeout>;let light:HTMLDivElement|undefined;
  let hasPending=$derived(snapshot?.jobs.some(j=>['queued','running','canceling','paused','unknown'].includes(j.status))??false);
  let paused=$derived(snapshot?.jobs.filter(j=>['paused','unknown'].includes(j.status))??[]);
  let latestJob=$derived(snapshot?.jobs.filter(j=>j.entry_id===latest?.id).sort((a,b)=>b.seq-a.seq)[0]);
@@ -57,6 +57,7 @@
  async function toggleTheme(){await run(()=>write(s=>({...s,theme:nextTheme(s.theme)})));}
  function edit(entry:Entry){selected=entry;title=entry.title;transcript=entry.transcript??'';confirm='edit';}
  function remove(entry:Entry){selected=entry;confirm='delete';}
+ function retryTranscription(entry:Entry){if(entry.transcript?.trim()){selected=entry;confirm='retry';}else void run(()=>api.retry(entry,'transcribe'));}
  function inspect(entry:Entry,kind:'transcript'|'transformed'){selected=entry;textKind=kind;confirm='text';}
  onMount(()=>{
   compact=innerWidth<=500&&innerHeight<=450;
@@ -69,7 +70,7 @@
 </script>
 
 <svelte:window onkeydown={e=>{if(e.key==='Escape'&&fullscreen&&!confirm)void mode('fullscreen');}}/>
-<div class="app" role="region" aria-label="x-talk workspace" onpointermove={e=>{const r=e.currentTarget.getBoundingClientRect();e.currentTarget.style.setProperty('--light-x',`${e.clientX-r.left}px`);e.currentTarget.style.setProperty('--light-y',`${e.clientY-r.top}px`);}} data-theme={dark?'night':'day'} class:compact>
+<div class="app" role="region" aria-label="x-talk workspace" onpointermove={e=>{if(!light)return;const r=e.currentTarget.getBoundingClientRect();light.style.transform=`translate(${e.clientX-r.left-260}px,${e.clientY-r.top-260}px)`;}} data-theme={dark?'night':'day'} class:compact>
  <nav class="nav-rail" aria-label="Main navigation">
   <button class="rail-home" class:chosen={view==='record'} class:live={snapshot?.capture.active} onclick={()=>go('record')} aria-label="Recorder" title="Recorder" aria-current={view==='record'?'page':undefined}><img src={heart} alt="x-talk" width="36" height="36"></button>
   <div class="rail-divider"></div>
@@ -92,18 +93,20 @@
   {:else if view==='record'}
    <Recorder {spectrum} {snapshot} entry={latest} {elapsed} {captureBusy} {busy} {compact} {control} copy={(id,kind)=>run(()=>api.copy(id,kind),'Copied')} importAudio={()=>run(api.import)}/>
    {#if latestJob&&['failed','unknown','paused'].includes(latestJob.status)}<div class="home-job-error stage-error" role="alert"><strong>{jobLabel(latestJob)}</strong>{#if latestJob.error}<p>{latestJob.error.message}</p>{/if}<button class="subtle-button" onclick={()=>go('recordings')}>View recording</button></div>{/if}
-  {:else if view==='recordings'}<RecordingsTable {snapshot} {refreshKey} {busy} {run} {edit} {remove} clearAll={()=>{error='';confirm='clear';}} {inspect} {playback}/>
+  {:else if view==='recordings'}<RecordingsTable {snapshot} {refreshKey} {busy} {run} {retryTranscription} {edit} {remove} clearAll={()=>{error='';confirm='clear';}} {inspect} {playback}/>
   {:else}<SettingsView bind:this={settingsView} {snapshot} {write} {refresh} {guard}/>
   {/if}
  </div>
  {#if notice}<div class="toast" role="status"><Icon name="check" size={16}/>{notice}</div>{/if}
  {#if confirm}<dialog bind:this={dialog} class="modal" class:wide={confirm==='edit'||confirm==='text'} aria-labelledby="dialog-title" oncancel={()=>confirm=null} onclose={()=>confirm=null}>
-  <div class="dialog-heading"><h2 id="dialog-title">{confirm==='edit'?'Edit recording':confirm==='text'?(textKind==='transcript'?'Transcript':'Transformed output'):confirm==='delete'?'Delete this recording?':confirm==='clear'?'Clear all recordings?':confirm==='discard'?'Discard interrupted work?':confirm==='unsaved'?'Save your changes?':'Quit x-talk?'}</h2><button class="icon-button" onclick={()=>confirm=null} aria-label="Close dialog"><Icon name="close" size={18}/></button></div>
+  <div class="dialog-heading"><h2 id="dialog-title">{confirm==='edit'?'Edit recording':confirm==='text'?(textKind==='transcript'?'Transcript':'Transformed output'):confirm==='delete'?'Delete this recording?':confirm==='clear'?'Clear all recordings?':confirm==='discard'?'Discard interrupted work?':confirm==='unsaved'?'Save your changes?':confirm==='retry'?'Replace this transcript?':'Quit x-talk?'}</h2><button class="icon-button" onclick={()=>confirm=null} aria-label="Close dialog"><Icon name="close" size={18}/></button></div>
   {#if confirm==='edit'&&selected}<form onsubmit={e=>{e.preventDefault();void run(()=>api.editRecording(selected!,title,selected!.subtitle,transcript),'Recording saved').then(saved=>{if(saved)confirm=null;});}}><label>Title<input bind:value={title} maxlength="500" required></label><label>Transcript<textarea rows="8" bind:value={transcript} disabled={editPending} maxlength="1000000"></textarea></label><p class="help">{editPending?'Finish or discard pending work before editing the transcript.':'Editing the transcript preserves previous transformed output and marks it out of date. Retry transformation to refresh it.'}</p><div class="actions dialog-actions"><button type="button" onclick={()=>confirm=null}>Cancel</button><button class="primary" disabled={busy}>Save changes</button></div></form>
   {:else if confirm==='text'&&selected}<div class="text-heading"><p class="muted">{selected.title}</p><CopyButton available={!!selected[textKind]} label="Copy full text" copy={()=>run(()=>api.copy(selected!.id,textKind),'Copied')}/></div><div class="output full-text" role="textbox" aria-label="Full saved text" aria-readonly="true" aria-multiline="true" tabindex="0">{selected[textKind]}</div>
   {:else if confirm==='unsaved'}<p>You have unsaved text changes. Save them before leaving this view?</p><div class="actions dialog-actions"><button onclick={()=>{confirm=null;pendingAction=null;}}>Keep editing</button><button disabled={busy} onclick={()=>continueNavigation(false)}>Discard changes</button><button class="primary" disabled={busy} onclick={()=>continueNavigation(true)}>Save and continue</button></div>
+  {:else if confirm==='retry'&&selected}<p>Retrying sends the audio to your transcription provider again, so a charge may apply. The new transcript replaces the saved one, including any edits you made. The transformed output is kept and marked out of date.</p><div class="actions dialog-actions"><button onclick={()=>confirm=null}>Keep transcript</button><button class="primary" disabled={busy} onclick={()=>{void run(()=>api.retry(selected!,'transcribe')).then(started=>{if(started){selected=null;confirm=null;}});}}>Retry transcription</button></div>
   {:else if confirm==='clear'}<p>This permanently deletes your entire recordings library and its saved audio, including paused work. Search and pagination do not limit this action. Imported source files are preserved.</p><div class="actions dialog-actions"><button disabled={busy} onclick={()=>confirm=null}>Cancel</button><button class="danger" disabled={busy||snapshot?.capture.active||snapshot?.jobs.some(j=>['queued','running','canceling'].includes(j.status))} onclick={()=>{void run(api.clearRecordings,'Recordings cleared').then(cleared=>{if(cleared){selected=null;confirm=null;}});}}>Clear all recordings</button></div>
   {:else}{#if confirm!=='quit'||snapshot?.capture.active||hasPending}<p>{confirm==='delete'?'This removes the app-managed audio and all saved text. Your imported source file is preserved.':confirm==='discard'?'Saved history and text stay available. Pending work will be discarded and audio retention will apply.':snapshot?.capture.active?'Choose whether to save or discard the active recording. Pending processing will pause after exit.':'Pending processing will pause until you explicitly resume it after reopening.'}</p>{/if}<div class="actions dialog-actions"><button onclick={()=>confirm=null}>Keep working</button>{#if confirm==='delete'}<button class="danger" disabled={busy} onclick={()=>{void run(()=>api.delete(selected!),'Recording deleted').then(saved=>{if(saved){selected=null;confirm=null;}});}}>Delete recording</button>{:else if confirm==='discard'}<button class="danger" disabled={busy} onclick={()=>{void run(()=>api.recover(paused.map(j=>j.id),true),'Pending work discarded').then(saved=>{if(saved)confirm=null;});}}>Discard work</button>{:else}{#if snapshot?.capture.active}<button class="danger" disabled={busy} onclick={()=>run(()=>api.quit(true))}>Discard and quit</button>{/if}<button class="primary" disabled={busy} onclick={()=>run(()=>api.quit(false))}>{snapshot?.capture.active?'Stop and quit':'Quit'}</button>{/if}</div>{/if}
   {#if error}<p class="error-text" role="alert">{error}</p>{/if}
  </dialog>{/if}
+ <div class="pointer-light" aria-hidden="true" bind:this={light}></div>
 </div>

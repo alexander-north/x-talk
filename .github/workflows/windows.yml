@@ -23,7 +23,7 @@ jobs:
       commit: ${{ steps.release.outputs.commit || github.sha }}
       tag: ${{ steps.release.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Stamp release from main
         id: release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -36,13 +36,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
       - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
       - run: scripts/build-media.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: media
           if-no-files-found: error
@@ -50,7 +50,7 @@ jobs:
             src-tauri/binaries/*.exe
             src-tauri/binaries/FFmpeg-LICENSE.txt
             src-tauri/binaries/NOTICE.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ffmpeg-source
           include-hidden-files: true
@@ -61,22 +61,22 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.11.1'
           cache: npm
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: media
           path: src-tauri/binaries
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ffmpeg-source
           path: .tmp/media-build
@@ -97,17 +97,42 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --features desktop,test-providers --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --features desktop --locked
+      # Always built without the updater key, so npm scripts, build.rs and proc-macros never see it.
       - name: Build installer
+        run: |
+          npm run desktop:build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The only step that receives the key: it signs the NSIS installer, which is the v2 updater artifact.
+      - name: Sign updater artifact
+        if: needs.prepare.outputs.tag != ''
         env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: |
-          if ($env:RELEASE_TAG) {
-            if (!$env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Updater signing key is missing' }
-            npm run desktop:build -- --config src-tauri/tauri.release.conf.json
-          } else { npm run desktop:build }
+          if (!$env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Updater signing key is missing' }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $installer = "src-tauri/target/release/bundle/nsis/x-talk_${version}_x64-setup.exe"
+          if (!(Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Installer to sign is missing: $installer" }
+          $signature = "$installer.sig"
+          if (Test-Path -LiteralPath $signature) { Remove-Item -LiteralPath $signature }
+          # --app-version binds the signature to this version; requireSignedVersion rejects it otherwise.
+          npx --no -- tauri signer sign --app-version $version $installer
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path -LiteralPath $signature -PathType Leaf) -or !([string](Get-Content -Raw -LiteralPath $signature)).Trim()) { throw 'Updater signature was not produced' }
+      - name: Check updater signature binding
+        if: needs.prepare.outputs.tag != ''
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $signature = "src-tauri/target/release/bundle/nsis/x-talk_${version}_x64-setup.exe.sig"
+          $pubkey = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).plugins.updater.pubkey
+          function Read-Minisign([string]$text) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($text.Trim())) -split "`n" }
+          function Get-KeyId([string]$line) { [Convert]::ToBase64String([byte[]]([Convert]::FromBase64String($line)[2..9])) }
+          $lines = Read-Minisign (Get-Content -Raw -LiteralPath $signature)
+          $public = Read-Minisign $pubkey
+          if ($lines.Count -lt 4 -or $lines[0] -notlike 'untrusted comment:*' -or $lines[2] -notlike 'trusted comment: *') { throw 'Malformed updater signature' }
+          if ((Get-KeyId $lines[1]) -ne (Get-KeyId $public[1])) { throw 'Updater signature key does not match the committed public key' }
+          if (($lines[2].Substring('trusted comment: '.Length) -split "`t") -notcontains "version:$version") { throw "Updater signature is not bound to version $version" }
+          "Updater signature is bound to version $version and the committed public key"
       - name: Reject test providers in release builds
         run: |
           cmd /d /c "cargo check --manifest-path src-tauri/Cargo.toml --release --features desktop,test-providers --locked > .tmp\release-test-guard.log 2>&1"
@@ -121,7 +146,7 @@ jobs:
           Copy-Item src-tauri/target/debug/x-talk.exe .tmp/acceptance/x-talk.exe
           Copy-Item src-tauri/binaries/* .tmp/acceptance/binaries/
           Copy-Item LICENSE,NOTICE .tmp/acceptance/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: acceptance-build
           include-hidden-files: true
@@ -136,13 +161,13 @@ jobs:
           $updater = @()
           if ($env:RELEASE_TAG) { $updater = @('--updater') }
           python scripts/release.py @updater --tag "v$version" --installer "src-tauri/target/release/bundle/nsis/x-talk_${version}_x64-setup.exe" --ffmpeg-source .tmp/media-build/ffmpeg-8.0.1.tar.xz --output .tmp/release-assets
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: x-talk-windows-x64
           include-hidden-files: true
           if-no-files-found: error
           path: .tmp/release-assets/*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: release-guard-evidence
@@ -159,24 +184,24 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.11.1'
           cache: npm
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: x-talk-windows-x64
           path: .tmp/release-assets
           run-id: ${{ inputs.acceptance_run_id || github.run_id }}
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: acceptance-build
           path: .tmp/acceptance
@@ -260,7 +285,7 @@ jobs:
           }
       - name: Upload non-sensitive test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-test-evidence
           include-hidden-files: true
@@ -279,11 +304,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: x-talk-windows-x64
           path: release-assets

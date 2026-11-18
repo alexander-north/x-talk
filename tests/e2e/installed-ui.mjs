@@ -29,8 +29,8 @@ describe('Installed release workspace',()=>{
   if(!Array.isArray(result.entries)||typeof result.total!=='number')throw new Error('Recordings query failed');
   await expect($('input[aria-label="Search recordings"]')).toExist();await expect($('summary')).toHaveText('Columns');
  });
- it('opens existing settings, diagnostic version/path, and all five sound previews',async()=>{
-  await $('button[aria-label="Settings"]').click();await $('button=Delivery and Sounds').click();if((await $$('button[title="Preview sound"]')).length!==5)throw new Error('Expected five cue previews');
+ it('opens existing settings, diagnostic version/path, and all six sound previews',async()=>{
+  await $('button[aria-label="Settings"]').click();await $('button=Delivery and Sounds').click();if((await $$('button[title="Preview sound"]')).length!==6)throw new Error('Expected six cue previews');
   await $('button=API Keys').click();await expect($('input[type=password]')).not.toExist();
   const current=await command('state');if(!current.transformation||'presets' in current)throw Error('Expected one transformation configuration');
   await $('button=Transformation').click();await expect($('.transformation-details')).toExist();await expect($('.preset-sidebar')).not.toExist();
@@ -38,15 +38,15 @@ describe('Installed release workspace',()=>{
   await $('button=General').click();await expect($('#diagnostic-logging')).toExist();await expect($('button=Open logs folder')).toExist();
   const state=await command('state');if(!state.diagnostics.directory.toLowerCase().endsWith('\\x-talk\\logs')||state.diagnostics.error)throw new Error('Diagnostic folder/write status failed');
  });
- it('plays the five approved embedded cues without changing saved toggles',async()=>{
+ it('plays the six approved embedded cues without changing saved toggles',async()=>{
   const state=await command('state');
-  for(const event of ['started','stopped','canceled','transcribed','transformed']){
+  for(const event of ['started','stopped','canceled','transcribed','transformed','failed']){
    await command('preview_sound',{event});await browser.pause(550);
   }
   if(JSON.stringify((await command('state')).settings.sounds)!==JSON.stringify(state.settings.sounds))throw Error('Preview changed saved sound toggles');
   if(state.diagnostics.enabled){
    const log=()=>readdirSync(state.diagnostics.directory).filter(n=>n.endsWith('.log')&&n.includes(state.diagnostics.session.slice(0,8))).map(n=>readFileSync(path.join(state.diagnostics.directory,n),'utf8')).join('');
-   await browser.waitUntil(()=>log().split('\n').filter(l=>l.includes('cue_started')&&l.includes('sound_set="v6"')).length>=5,{timeout:5000});
+   await browser.waitUntil(()=>log().split('\n').filter(l=>l.includes('cue_started')&&l.includes('sound_set="v7"')).length>=6,{timeout:5000});
    if(log().includes('cue_playback_failed'))throw Error('Installed Windows playback failed');
   }
  });

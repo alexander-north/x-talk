@@ -215,6 +215,9 @@ pub struct Sounds {
     pub canceled: bool,
     pub transcribed: bool,
     pub transformed: bool,
+    /// Added after the original five cues; older saved settings enable it.
+    #[serde(default = "failed_sound_default")]
+    pub failed: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Shortcuts {
@@ -250,6 +253,9 @@ pub struct Settings {
 fn diagnostic_logging_default() -> bool {
     true
 }
+fn failed_sound_default() -> bool {
+    true
+}
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -275,11 +281,12 @@ impl Default for Settings {
                 canceled: true,
                 transcribed: true,
                 transformed: true,
+                failed: true,
             },
             keep_audio: Some(100),
             theme: "system".into(),
             topmost: false,
-            autostart: true,
+            autostart: false,
             close_to_tray: true,
             diagnostic_logging: true,
             check_updates: true,
@@ -484,7 +491,9 @@ pub struct Job {
     pub delivery: String,
     pub eligible: bool,
 }
-#[derive(Clone, Debug, Serialize)]
+/// Lightweight job status for frequent UI refreshes. Deserializing it directly from a stored job
+/// document skips the snapshot, transcript input and real-time result.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JobView {
     pub id: String,
     pub entry_id: String,
@@ -784,6 +793,40 @@ mod tests {
         assert!(settings.validate().is_err());
     }
 
+    #[test]
+    fn legacy_settings_without_failure_sound_enable_it_and_new_installs_skip_autostart() {
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        json["sounds"].as_object_mut().unwrap().remove("failed");
+        json["sounds"]["transcribed"] = serde_json::json!(false);
+        json["autostart"] = serde_json::json!(true);
+        let legacy: Settings = serde_json::from_value(json).unwrap();
+        assert!(legacy.sounds.failed);
+        assert!(!legacy.sounds.transcribed);
+        assert!(
+            legacy.autostart,
+            "saved settings keep their autostart choice"
+        );
+        assert!(!Settings::default().autostart);
+        assert!(Settings::default().sounds.failed);
+    }
+    #[test]
+    fn job_view_reads_stored_job_documents() {
+        let mut job = Job::new(
+            id(),
+            "initial",
+            Snapshot::capture(&Settings::default(), Preset::seed()),
+            true,
+        );
+        job.seq = 7;
+        job.input = Some("private transcript".into());
+        let view: JobView = serde_json::from_str(&serde_json::to_string(&job).unwrap()).unwrap();
+        assert_eq!(view.id, job.id);
+        assert_eq!(view.seq, 7);
+        assert_eq!(
+            serde_json::to_value(&view).unwrap(),
+            serde_json::to_value(JobView::from(job)).unwrap()
+        );
+    }
     #[test]
     fn template_is_literal() {
         let p = Preset::seed();

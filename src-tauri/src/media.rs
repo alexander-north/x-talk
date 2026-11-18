@@ -19,7 +19,13 @@ pub struct PreparedAudio {
 }
 #[async_trait]
 pub trait MediaProcessor: Send + Sync {
+    /// Validate a user-selected import, including the import size limit.
     async fn probe(&self, path: &Path) -> Result<AudioInfo>;
+    /// Validate audio already retained by x-talk, such as a long native-rate recording.
+    /// Format, stream and duration rules still apply; the import size limit does not.
+    async fn inspect(&self, path: &Path) -> Result<AudioInfo> {
+        self.probe(path).await
+    }
     async fn prepare(&self, path: &Path, dir: &Path, snapshot: &Snapshot) -> Result<PreparedAudio>;
 }
 #[derive(Clone)]
@@ -141,6 +147,10 @@ impl MediaProcessor for Ffmpeg {
                 "Audio source exceeds the 1 GiB import limit.",
             ));
         }
+        self.inspect(path).await
+    }
+    async fn inspect(&self, path: &Path) -> Result<AudioInfo> {
+        let bytes = tokio::fs::metadata(path).await?.len();
         let args = vec![
             "-v".into(),
             "error".into(),

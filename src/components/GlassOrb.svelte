@@ -11,29 +11,40 @@
   const smoothed=Array(48).fill(0);
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
   const outgoing=document.createElement('canvas');
-  let blend=1;
-  function draw(now:number){
+  let blend=1,paintedReduced:boolean|null=null;
+  // Skip frames that would repaint identical pixels (reduced motion) or that the slow idle/complete art does not need (~30 fps cap).
+  // Phase changes, size changes, motion-preference changes, and cross-fades always paint; `last` only advances on painted frames.
+  function skip(now:number,width:number,reduced:boolean){
+   if(previous!==phase||blend<1||width!==canvas.width||reduced!==paintedReduced)return false;
+   if(reduced)return phase!=='recording';
+   return (phase==='idle'||phase==='complete')&&now-last<1000/30-4;
+  }
+  function paint(now:number,width:number,reduced:boolean){
    const dt=Math.min((now-last)/1000||0,0.05);last=now;
    if(previous!==phase){
     outgoing.width=canvas.width;outgoing.height=canvas.height;
     outgoing.getContext('2d')?.drawImage(canvas,0,0);
-    blend=motion.matches?1:0;time=0;previous=phase;
+    blend=reduced?1:0;time=0;previous=phase;
    }
    if(!document.hidden){
     time+=dt*(phase==='transcribing'||phase==='transforming'?1.5:1);
     const targetShape=phase==='transforming'?1:0;
-    shape=motion.matches?targetShape:shape+(targetShape-shape)*(1-Math.exp(-dt*9));
+    shape=reduced?targetShape:shape+(targetShape-shape)*(1-Math.exp(-dt*9));
     for(let i=0;i<48;i++){
      const target=phase==='recording'?(spectrum[i]??0):0;
      smoothed[i]+=(target-smoothed[i])*(1-Math.exp(-dt*(target>smoothed[i]?22:8)));
     }
-    const size=canvas.clientWidth,dpr=Math.min(devicePixelRatio||1,2);
-    if(canvas.width!==Math.round(size*dpr)){canvas.width=Math.round(size*dpr);canvas.height=canvas.width;}
+    if(canvas.width!==width){canvas.width=width;canvas.height=canvas.width;}
     context!.setTransform(canvas.width/440,0,0,canvas.width/440,0,0);
-    paintOrb(context!,phase,motion.matches?0:time,smoothed,motion.matches,shape);
+    paintOrb(context!,phase,reduced?0:time,smoothed,reduced,shape);
+    paintedReduced=reduced;
     blend=Math.min(1,blend+dt/.55);
     if(blend<1&&outgoing.width){context!.save();context!.setTransform(1,0,0,1,0,0);context!.globalAlpha=1-blend*blend*(3-2*blend);context!.drawImage(outgoing,0,0,canvas.width,canvas.height);context!.restore();}
-   }
+   }else paintedReduced=null;// Force a repaint once visible, in case the phase changed while hidden.
+  }
+  function draw(now:number){
+   const reduced=motion.matches,width=Math.round(canvas.clientWidth*Math.min(devicePixelRatio||1,2));
+   if(!skip(now,width,reduced))paint(now,width,reduced);
    frame=requestAnimationFrame(draw);
   }
   frame=requestAnimationFrame(draw);

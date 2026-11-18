@@ -5,11 +5,22 @@ use std::{
     sync::{mpsc, Arc, Mutex},
 };
 type Work = Box<dyn FnOnce(&mut Connection) + Send>;
+/// Entries still holding audio. Uses the exact expression of the `entries_audio` partial index.
+const RETAINED_AUDIO: &str = "SELECT document FROM entries \
+     WHERE deleting=0 AND json_extract(document,'$.audio') IS NOT NULL";
+/// Entries still holding audio outside the newest ?1 live entries.
+const AUDIO_BEYOND_RETENTION: &str = "SELECT document FROM entries \
+     WHERE deleting=0 AND json_extract(document,'$.audio') IS NOT NULL \
+     AND seq NOT IN (SELECT seq FROM entries WHERE deleting=0 ORDER BY seq DESC LIMIT ?1)";
+/// Completed and discarded jobs kept after retention.
+const FINISHED_JOBS_KEPT: u32 = 100;
 #[derive(Clone)]
 pub struct Store {
     worker: Arc<DatabaseWorker>,
     pub root: Arc<PathBuf>,
     recovery_warnings: Arc<Mutex<Vec<AppError>>>,
+    /// Signaled after a cancellation request commits, so workers need not poll the database.
+    cancellation: Arc<tokio::sync::Notify>,
 }
 struct DatabaseWorker {
     tx: Option<mpsc::Sender<Work>>,
@@ -33,9 +44,9 @@ impl Store {
         std::fs::create_dir_all(root.join("tmp"))?;
         let path = root.join("x-talk.sqlite3");
         let mut db = Connection::open(&path)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;")?;
+        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;")?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(AppError::new(
                 "storage",
                 "version",
@@ -75,6 +86,12 @@ impl Store {
             tx.execute_batch(include_str!("../migrations/002.sql"))?;
             tx.commit()?;
         }
+        if version < 3 {
+            // Index-only migration: no data changes, so no backup is needed.
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("../migrations/003.sql"))?;
+            tx.commit()?;
+        }
         db.execute_batch("DELETE FROM reservations; DELETE FROM audio_leases;")?;
         let (tx, rx) = mpsc::channel::<Work>();
         let thread = std::thread::Builder::new()
@@ -91,6 +108,7 @@ impl Store {
             }),
             root: Arc::new(root.into()),
             recovery_warnings: Arc::default(),
+            cancellation: Arc::default(),
         };
         store.recover()?;
         store.recover_admissions()?;
@@ -451,25 +469,6 @@ rows.map(|r|Ok(serde_json::from_str(&r?)?)).collect()}
             Ok(())
         })
     }
-    pub fn edit(&self, id: &str, rev: u64, title: String, subtitle: String) -> Result<()> {
-        if title.trim().is_empty() || title.chars().count() > 500 || subtitle.chars().count() > 2000
-        {
-            return Err(AppError::input(
-                "Enter a title of at most 500 characters and a subtitle of at most 2000.",
-            ));
-        }
-        let id = id.to_owned();
-        self.call(move |db| {
-            let mut e = read_entry(db, &id)?;
-            if e.revision != rev {
-                return Err(AppError::input("Entry changed. Reload before saving."));
-            }
-            e.title = title;
-            e.subtitle = subtitle;
-            e.subtitle_manual = true;
-            write_entry(db, &mut e)
-        })
-    }
     pub fn reserve(&self, id: &str) -> Result<()> {
         let id = id.to_owned();
         self.call(move |db| {
@@ -514,11 +513,22 @@ rows.map(|r|Ok(serde_json::from_str(&r?)?)).collect()}
         })
     }
     pub fn jobs(&self) -> Result<Vec<Job>> {
-        self.call(|db|{
-let mut q=db.prepare("SELECT document FROM jobs WHERE status NOT IN ('complete','discarded') OR seq IN (SELECT seq FROM jobs WHERE status='complete' ORDER BY seq DESC LIMIT 100) ORDER BY seq")?;
-let rows=q.query_map([],|r|r.get::<_,String>(0))?;
-rows.map(|r|Ok(serde_json::from_str(&r?)?)).collect()}
-)
+        self.visible_jobs()
+    }
+    /// The same jobs as `jobs()`, without deserializing snapshots or transcript input.
+    pub fn job_views(&self) -> Result<Vec<JobView>> {
+        self.visible_jobs()
+    }
+    fn visible_jobs<T: serde::de::DeserializeOwned + Send + 'static>(&self) -> Result<Vec<T>> {
+        self.call(|db| {
+            let mut q = db.prepare(
+                "SELECT document FROM jobs WHERE status NOT IN ('complete','discarded') \
+                 OR seq IN (SELECT seq FROM jobs WHERE status='complete' ORDER BY seq DESC LIMIT 100) \
+                 ORDER BY seq",
+            )?;
+            let rows = q.query_map([], |r| r.get::<_, String>(0))?;
+            rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+        })
     }
     pub fn next(&self) -> Result<Option<Job>> {
         self.call(|db| {
@@ -582,7 +592,14 @@ rows.map(|r|Ok(serde_json::from_str(&r?)?)).collect()}
             }
             tx.commit()?;
             Ok(())
-        })
+        })?;
+        self.cancellation.notify_waiters();
+        Ok(())
+    }
+    /// Notified after each committed cancellation request. Enable the `Notified` future before
+    /// checking `cancellation_requested`, so a request committed in between is not missed.
+    pub fn cancellation_signal(&self) -> &tokio::sync::Notify {
+        &self.cancellation
     }
     pub fn cancellation_requested(&self, id: &str) -> Result<bool> {
         let id = id.to_owned();
@@ -881,33 +898,69 @@ Ok(())}
         if pending {
             return Err(AppError::new("storage", "unlink", "Some audio files are still in use or inaccessible. Retry Clear All or reopen x-talk to finish cleanup."));
         }
+        self.purge_cleared_history();
         Ok(count)
+    }
+    /// Remove copies of cleared history outside the live database: pre-migration backups and
+    /// deleted pages still held in the write-ahead log. Best effort; the clear has succeeded.
+    fn purge_cleared_history(&self) {
+        for backup in ["before-migration.sqlite3", "before-migration-v2.sqlite3"] {
+            for suffix in ["", "-wal", "-shm", "-journal"] {
+                match std::fs::remove_file(self.root.join(format!("{backup}{suffix}"))) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => tracing::warn!(
+                        kind = ?e.kind(),
+                        os_error = e.raw_os_error(),
+                        "migration_backup_removal_failed"
+                    ),
+                }
+            }
+        }
+        let checkpoint = self.call(|db| {
+            db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+            Ok(())
+        });
+        if checkpoint.is_err() {
+            tracing::warn!("wal_checkpoint_failed");
+        }
     }
     pub fn retention(&self) -> Result<()> {
         let keep = self.settings()?.keep_audio;
-        if let Some(keep) = keep {
-            self.call(move|db|{
-let tx=db.transaction()?;
-let mut list=Vec::new();
-{
-let mut q=tx.prepare("SELECT document FROM entries WHERE deleting=0 ORDER BY seq DESC LIMIT -1 OFFSET ?1")?;
-for row in q.query_map([keep],|r|r.get::<_,String>(0))?{
-list.push(serde_json::from_str::<Entry>(&row?)?);
-}
-}
-for mut e in list{
-let pinned:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE entry_id=?1 AND status IN ('queued','running','canceling','paused','unknown','canceled')) OR EXISTS(SELECT 1 FROM audio_leases WHERE entry_id=?1)",[&e.id],|r|r.get(0))?;
-if !pinned{
-if let Some(path)=e.audio.take(){
-tx.execute("INSERT OR IGNORE INTO file_gc VALUES(?1)",[path])?;
-write_entry(&tx,&mut e)?;
-}
-}
-}
-tx.commit()?;
-Ok(())}
-)?;
-        }
+        self.call(move |db| {
+            let tx = db.transaction()?;
+            if let Some(keep) = keep {
+                let mut list = Vec::new();
+                {
+                    let mut q = tx.prepare(AUDIO_BEYOND_RETENTION)?;
+                    for row in q.query_map([keep], |r| r.get::<_, String>(0))? {
+                        list.push(serde_json::from_str::<Entry>(&row?)?);
+                    }
+                }
+                for mut e in list {
+                    let pinned: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM jobs WHERE entry_id=?1 AND status IN ('queued','running','canceling','paused','unknown','canceled')) \
+                         OR EXISTS(SELECT 1 FROM audio_leases WHERE entry_id=?1)",
+                        [&e.id],
+                        |r| r.get(0),
+                    )?;
+                    if !pinned {
+                        if let Some(path) = e.audio.take() {
+                            tx.execute("INSERT OR IGNORE INTO file_gc VALUES(?1)", [path])?;
+                            write_entry(&tx, &mut e)?;
+                        }
+                    }
+                }
+            }
+            // Finished jobs carry full snapshots and inputs; keep only recent history.
+            tx.execute(
+                "DELETE FROM jobs WHERE status IN ('complete','discarded') AND seq <= \
+                 (SELECT seq FROM jobs WHERE status IN ('complete','discarded') ORDER BY seq DESC LIMIT 1 OFFSET ?1)",
+                [FINISHED_JOBS_KEPT],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })?;
         self.reconcile()
     }
     pub fn path(&self, relative: &str) -> Result<PathBuf> {
@@ -948,7 +1001,7 @@ Ok(())}
         self.call(move |db| {
             let mut all = Vec::new();
             {
-                let mut q = db.prepare("SELECT document FROM entries WHERE deleting=0")?;
+                let mut q = db.prepare(RETAINED_AUDIO)?;
                 for row in q.query_map([], |r| r.get::<_, String>(0))? {
                     all.push(serde_json::from_str::<Entry>(&row?)?);
                 }
@@ -1078,4 +1131,29 @@ fn read_active_preset(db: &Connection) -> Result<Preset> {
         |r| r.get(0),
     )?;
     Ok(serde_json::from_str(&document)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn plan(s: &Store, sql: &'static str) -> String {
+        s.call(move |db| {
+            let mut q = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let keep = vec![100; q.parameter_count()];
+            let rows = q.query_map(rusqlite::params_from_iter(keep), |r| r.get::<_, String>(3))?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?.join("\n"))
+        })
+        .unwrap()
+    }
+    #[test]
+    fn audio_scans_use_the_partial_index_and_deletes_overwrite_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        assert!(plan(&s, RETAINED_AUDIO).contains("entries_audio"));
+        assert!(plan(&s, AUDIO_BEYOND_RETENTION).contains("entries_audio"));
+        let secure: i64 = s
+            .call(|db| Ok(db.pragma_query_value(None, "secure_delete", |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(secure, 1);
+    }
 }

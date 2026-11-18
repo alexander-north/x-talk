@@ -13,7 +13,7 @@ describe('Recording workspace',()=>{
  before(async()=>{
   await browser.execute(()=>localStorage.removeItem('xtalk.recordings.columns.v1'));await command('window_mode',{mode:'full'});
   const state=await command('state');if(!state.test_providers)throw new Error('UI checks require isolated test providers');
-  await command('save_settings',{settings:{...state.settings,theme:'day',transform:true,copy_raw:false,copy_transformed:false,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false}}});
+  await command('save_settings',{settings:{...state.settings,theme:'day',transform:true,copy_raw:false,copy_transformed:false,sounds:{started:false,stopped:false,canceled:false,transcribed:false,transformed:false,failed:false}}});
  });
  it('opens on the recorder with one navigation rail and displays both saved outputs',async()=>{
   await expect($('nav[aria-label="Main navigation"]')).toExist();await expect($('header')).not.toExist();await expect($('footer')).not.toExist();
@@ -45,6 +45,8 @@ describe('Recording workspace',()=>{
   await $('dialog textarea').setValue('Corrected transcript with a unique butterscotch phrase.\nSecond line.\nThird line.\nFourth line is preserved too.');await $('button=Save changes').click();await expect($('dialog')).not.toExist();
   const saved=await command('entry',{id:entry.id});if(saved.transcription_ms!==null)throw Error('Manual transcript edit kept the old timing');if(saved.transcript_revision!==entry.transcript_revision+1||saved.transformed!==entry.transformed||saved.transformed_revision===saved.transcript_revision)throw new Error('Transcript edit did not preserve stale output');entry=saved;
   await expect($('.badge.stale')).toHaveText('Out of date');await $('input[aria-label="Search recordings"]').setValue('butterscotch');await expect($('.recording-title')).toHaveText('Desert thoughts');
+  const jobCount=(await command('state')).jobs.length;await $('button[aria-label="Retry transcription for Desert thoughts"]').click();await expect($('#dialog-title')).toHaveText('Replace this transcript?');await expect($('dialog button.primary')).toHaveText('Retry transcription');
+  await $('button=Keep transcript').click();await expect($('dialog')).not.toExist();if((await command('entry',{id:entry.id})).transcript!==entry.transcript||(await command('state')).jobs.length!==jobCount)throw Error('Declining the retry confirmation changed the transcript or queued work');
   await $('input[aria-label="Search recordings"]').setValue('not present in this recording');await expect($('.table-empty h2')).toHaveText('No recordings found');await $('button[aria-label="Clear search"]').click();await expect($('.recording-title')).toHaveText('Desert thoughts');
   await (await $$('button.sort-button'))[0].click();await expect($('th[aria-sort="ascending"]')).toExist();
   await $('summary').click();const source=await $('label=Source');await source.click();
@@ -68,7 +70,7 @@ describe('Recording workspace',()=>{
   await $('button[aria-label="Expand workspace"]').click();await expect($('.app')).not.toHaveAttribute('class',expect.stringContaining('compact'));const full=await browser.getWindowSize();if(full.width<=small.width)throw new Error('Expand did not restore a larger workspace');await reveal('Show transcript');await expect($('[aria-label="Transcript output"]')).toHaveText(expect.stringContaining('butterscotch'));
   await $('button[aria-label="Full screen"]').click();await expect($('button[aria-label="Exit full screen"]')).toExist();await browser.keys('Escape');await expect($('button[aria-label="Full screen"]')).toExist();
   await $('button[aria-label="Theme: Dark"]').click();await expect($('button[aria-label="Theme: Auto (follow system)"]')).toExist();await $('button[aria-label="Theme: Auto (follow system)"]').click();await expect($('.app')).toHaveAttribute('data-theme','day');
-  await $('button[aria-label="Settings"]').click();await $('button=Delivery and Sounds').click();if((await $$('button[title="Preview sound"]')).length!==5)throw new Error('Missing distinct cue previews');
+  await $('button[aria-label="Settings"]').click();await $('button=Delivery and Sounds').click();if((await $$('button[title="Preview sound"]')).length!==6)throw new Error('Missing distinct cue previews');
  });
 });
 

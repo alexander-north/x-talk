@@ -18,7 +18,7 @@ describe('Windows desktop application', () => {
   await $('button[aria-label="Settings"]').click();await $('button=Providers').click();
   await expect((await $$('select'))[0]).toExist();await $('button=API Keys').click();await expect($('input[type=password]')).not.toExist();
   await $('button=Delivery and Sounds').click();
-  if((await $$('input[type=checkbox]')).length!==7) throw new Error('Expected two delivery and five sound controls');
+  if((await $$('input[type=checkbox]')).length!==8) throw new Error('Expected two delivery and six sound controls');
   await $('button=Transformation').click();
   await expect((await $$('textarea.prompt'))[0]).toHaveValue(expect.stringContaining('conservative speech-to-text transcript cleaner'));
  });

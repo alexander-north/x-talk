@@ -49,21 +49,36 @@ pub async fn check_update(app: tauri::AppHandle) -> Result<Status> {
         s.error = None;
     });
     let result = async {
-        let builder = app.updater_builder().on_before_exit(|| {}).timeout(Duration::from_secs(20));
+        let builder = app
+            .updater_builder()
+            .on_before_exit(|| {})
+            .timeout(Duration::from_secs(20));
         #[cfg(all(debug_assertions, feature = "test-providers"))]
         let builder = if std::env::var("XTALK_TEST_PROVIDERS").as_deref() == Ok("1") {
             if let Ok(endpoint) = std::env::var("XTALK_TEST_UPDATE_URL") {
-                let url: reqwest::Url = endpoint.parse().map_err(|_| failure("Invalid fixture URL"))?;
+                let url: reqwest::Url = endpoint
+                    .parse()
+                    .map_err(|_| failure("Invalid fixture URL"))?;
                 if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
                     return Err(failure("Update fixtures require HTTP loopback."));
                 }
-                builder.endpoints(vec![url]).map_err(|_| failure("Invalid fixture endpoint"))?
-            } else { builder }
-        } else { builder };
-        let updater = builder.build()
+                builder
+                    .endpoints(vec![url])
+                    .map_err(|_| failure("Invalid fixture endpoint"))?
+            } else {
+                builder
+            }
+        } else {
+            builder
+        };
+        let updater = builder
+            .build()
             .map_err(|_| failure("Update checking is not configured correctly."))?;
-        updater.check().await.map_err(|_| failure("Could not check for updates. Check your connection and try again. Updates are unavailable while the GitHub repository is private."))
-    }.await;
+        updater.check().await.map_err(|_| {
+            failure("Could not check for updates. Check your connection and try again.")
+        })
+    }
+    .await;
     match result {
         Ok(update) => {
             change(&app, |s| {

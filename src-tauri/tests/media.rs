@@ -71,6 +71,45 @@ async fn probe_checks_actual_media_and_source_limits() {
         .contains("1 GiB"));
 }
 #[tokio::test]
+async fn retained_long_native_recording_passes_inspection_beyond_import_size_limit() {
+    use std::io::Write;
+    let d = tempfile::tempdir().unwrap();
+    // Capture writes 32-bit float WAV at the native rate; 48 kHz stereo passes 1 GiB at ~47 minutes.
+    let seconds = 2900u32;
+    let (rate, channels, bytes_per_sample) = (48000u32, 2u16, 4u16);
+    let block = channels * bytes_per_sample;
+    let data_bytes = seconds * rate * u32::from(block);
+    assert!(u64::from(data_bytes) > 1_073_741_824);
+    let path = d.path().join("long-recording.wav");
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(b"RIFF").unwrap();
+    f.write_all(&(data_bytes + 36).to_le_bytes()).unwrap();
+    f.write_all(b"WAVEfmt ").unwrap();
+    f.write_all(&16u32.to_le_bytes()).unwrap();
+    f.write_all(&3u16.to_le_bytes()).unwrap(); // IEEE float
+    f.write_all(&channels.to_le_bytes()).unwrap();
+    f.write_all(&rate.to_le_bytes()).unwrap();
+    f.write_all(&(rate * u32::from(block)).to_le_bytes())
+        .unwrap();
+    f.write_all(&block.to_le_bytes()).unwrap();
+    f.write_all(&(bytes_per_sample * 8).to_le_bytes()).unwrap();
+    f.write_all(b"data").unwrap();
+    f.write_all(&data_bytes.to_le_bytes()).unwrap();
+    // Extending the file keeps the fixture cheap while still exceeding the import limit on disk.
+    f.set_len(u64::from(data_bytes) + 44).unwrap();
+    drop(f);
+    let media = tools();
+    assert!(media
+        .probe(&path)
+        .await
+        .unwrap_err()
+        .message
+        .contains("1 GiB"));
+    let info = media.inspect(&path).await.unwrap();
+    assert_eq!(info.duration, f64::from(seconds));
+    assert_eq!(info.bytes, u64::from(data_bytes) + 44);
+}
+#[tokio::test]
 async fn silence_filter_keeps_quiet_speech_and_short_pauses_and_original() {
     let d = tempfile::tempdir().unwrap();
     let file = d.path().join("original.wav");

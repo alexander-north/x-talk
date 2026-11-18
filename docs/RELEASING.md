@@ -5,13 +5,15 @@ Every normal push to main runs CI and automatically publishes a stable Windows r
 ## What CI does
 
 1. Create a version commit from the pushed main revision and tag it `v<major>.<minor>.<workflow-run-number>`. All five version files agree. Main keeps its development baseline; the tag contains the exact built source. Run retries reuse the tag instead of rewriting it. Before run number 65536, change the version-stamping algorithm to introduce a new bounded patch sequence and advance the release series; changing the minor version alone does not reset GitHub’s run counter.
-2. Rebuild and verify pinned FFmpeg, run frontend/Rust/packaging checks, build the installer, and sign its updater artifact using `TAURI_SIGNING_PRIVATE_KEY`. Branch/PR checks do not receive this secret and build unsigned artifacts.
+2. Rebuild and verify pinned FFmpeg, run frontend/Rust/packaging checks, and build the installer without any signing key. For a release, a separate step that does nothing else then signs the NSIS installer (the updater artifact) with `tauri signer sign --app-version <version>`, writing `<installer>.sig`; it is the only step that receives `TAURI_SIGNING_PRIVATE_KEY`, so npm scripts, `build.rs` and proc-macros never see it. A following step checks that the signature names the committed public key and is bound to the release version. Branch/PR checks do not receive this secret and build unsigned artifacts.
 3. Exercise installed smoke, reinstall/uninstall persistence, offline desktop workflows, and updater fixtures. Main releases also verify a signed installer handoff through the native updater, automatic restart, and retained settings, history, audio, and credentials in a disposable hosted profile.
 4. Publish only after all jobs pass and only if the source revision is still main's head. Assets include the EXE, updater signature, latest.json, project source, exact FFmpeg source, MPL dependency sources, license/build recipe archive, and SHA256SUMS.txt. A failed check means no release. Existing published releases are never overwritten.
 
 Update `docs/RELEASE_NOTES.md` when behavior changes; CI uses it for both GitHub and in-app notes. Ordinary releases need no manual version bump. Change the major/minor development baseline consistently when starting a new release series. `python scripts/release.py` checks versions. `python -m unittest discover -s tests/release -v` checks packaging/version stamping.
 
 The workflow uses GitHub's built-in token. Prepare/publish jobs receive contents write; other jobs have read access. Keep Actions enabled and permit the workflow to create tags/releases. Do not add provider keys to CI. A manual `acceptance_run_id` dispatch diagnoses desktop tests using retained artifacts and never publishes.
+
+Workflow actions are pinned to full commit SHAs with a `# vX.Y.Z` comment; `.github/dependabot.yml` proposes weekly grouped updates for those pins and for npm and Cargo dependencies. Tauri packages are grouped separately; merge the npm `@tauri-apps/*` and Cargo `tauri*` updates together so the JS API, CLI and crates stay matched. `.github/workflows/audit.yml` runs `npm audit --omit=dev` and a pinned `cargo audit` weekly, on demand, and on pull requests that change a lockfile. It is not a required check and is outside the release workflow, so a new advisory cannot block a release; triage its failures as dependency updates.
 
 ## Routine maintainer workflow
 
@@ -56,7 +58,15 @@ The updater's public key is committed in tauri.conf.json. Its private key belong
 
 Updater signing is separate from Windows Authenticode. Windows still sees an unsigned publisher and may show SmartScreen warnings. Do not advise disabling security protections. macOS remains unsupported.
 
-For local signed packaging, build with `src-tauri/tauri.release.conf.json` and the signing environment variables, then use `scripts/release.py --updater --tag v<version> --installer <exe> --ffmpeg-source <archive> --output <empty-directory>` from clean committed matching source. Normal `npm run desktop:build` remains available without private keys for contributors.
+CI does not use `src-tauri/tauri.release.conf.json`. For local signed packaging, build with it and the signing environment variables (or build normally and run `npm run tauri -- signer sign --app-version <version> <exe>`; without `--app-version` clients reject the signature because `requireSignedVersion` is on), then use `scripts/release.py --updater --tag v<version> --installer <exe> --ffmpeg-source <archive> --output <empty-directory>` from clean committed matching source. Normal `npm run desktop:build` remains available without private keys for contributors.
+
+### Recommended repository settings
+
+These cannot be set from the repository and are owner actions:
+
+- Move `TAURI_SIGNING_PRIVATE_KEY` from a repository secret into a GitHub Environment (for example `release`) whose deployment branches are limited to `main`. Environment secrets are only available to jobs that declare that environment, so this first needs the signing step moved into its own job that declares it and hands the `.sig` back as an artifact; that restructuring is a planned follow-up, not done yet. Moving the secret before then makes main releases fail closed at the signing step.
+- Give the signing key a password. Re-encrypt the existing key rather than generating a new one (the Tauri CLI only generates new keys; a minisign-compatible tool can change a key's password), confirm locally that a signature made with it still verifies against the committed public key, store the password as a second secret, and pass it as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the signing step instead of `''`.
+- Enable Dependabot alerts and security updates in **Settings → Code security**.
 
 Fix a bad release with a new main commit and higher version, not a moved tag or replaced binary. The client installs only newer versions. A maintainer can remove a bad release from latest while preparing a replacement; do not silently roll clients back.
 

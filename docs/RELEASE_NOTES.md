@@ -1,4 +1,18 @@
-# x-talk: live words and a simpler recording workspace
+# x-talk: audible failures, faster libraries, safer long recordings
+
+This release fixes long real-time recordings, makes failures audible when x-talk is in the tray, and tightens privacy and the release pipeline.
+
+- **Long real-time recordings keep their transcript.** Recordings past roughly 47 minutes on a stereo microphone no longer fail validation after the transcript was already streamed.
+- **You can hear when something goes wrong.** If a shortcut or tray action can't start, or processing fails, x-talk plays a short attention sound and the tray tooltip points you to the window. Turn it off under Delivery and Sounds → Something went wrong.
+- **Retry transcription asks first** when it would replace an existing transcript, including your edits.
+- **Large libraries stay quick.** Finishing a recording no longer rescans the whole library, and old finished job records are pruned.
+- **Clear All clears more.** It also removes old database backups left by upgrades, and deleted text is overwritten in the database.
+- **Start at login is off for new installations.** Existing installations keep their setting.
+- Missing-key messages now point to Settings → API Keys. The recorder uses less CPU while idle.
+
+After this update the local database cannot be opened by older x-talk versions.
+
+## Also in the 1.6 series
 
 ElevenLabs now offers an optional real-time recording mode. See words appear while you speak, then press Stop to finish the transcript and run any enabled cleanup. After-recording transcription remains the default; imports and retries still use batch transcription. Real-time mode sends microphone audio to ElevenLabs while recording, and provider charges apply.
 
