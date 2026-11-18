@@ -27,7 +27,7 @@ sha2 = "=0.10.9"
 thiserror = "=2.0.21"
 uuid = { version = "=1.28.0", features = ["v4", "serde"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
-rusqlite = { version = "=0.41.0", features = ["bundled", "backup"] }
+rusqlite = { version = "=0.43.0", features = ["bundled", "backup"] }
 reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "fs", "process", "time", "sync", "io-util", "macros"] }
 tokio-util = { version = "=0.7.20", features = ["io"] }
