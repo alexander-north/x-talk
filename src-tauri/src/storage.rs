@@ -58,7 +58,7 @@ impl Store {
                 db.backup(
                     rusqlite::MAIN_DB,
                     root.join("before-migration.sqlite3"),
-                    None,
+                    None::<fn(rusqlite::backup::Progress)>,
                 )?;
             }
             let tx = db.transaction()?;
@@ -79,7 +79,7 @@ impl Store {
                 db.backup(
                     rusqlite::MAIN_DB,
                     root.join("before-migration-v2.sqlite3"),
-                    None,
+                    None::<fn(rusqlite::backup::Progress)>,
                 )?;
             }
             let tx = db.transaction()?;
