@@ -7,10 +7,10 @@ Every normal push to main runs CI and automatically publishes a stable release f
 The workflow is [.github/workflows/windows.yml](../.github/workflows/windows.yml) ("Build, verify and release"; the file name is kept because the ruleset and history refer to it).
 
 1. `prepare` creates a version commit from the pushed main revision and tags it `v<major>.<minor>.<workflow-run-number>`. All version files agree. Main keeps its development baseline; the tag contains the exact built source. Run retries reuse the tag instead of rewriting it. Before run number 65536, change the version-stamping algorithm to introduce a new bounded patch sequence and advance the release series; changing the minor version alone does not reset GitHub’s run counter.
-2. `media` rebuilds the pinned Windows FFmpeg tools on Ubuntu and verifies them. `windows` runs frontend/Rust/packaging checks and builds the installer without any signing key. `macos` (on `macos-15`, arm64) builds the macOS FFmpeg tools natively, runs the same checks where they apply (release unit tests, `npm run check`/`npm test`, `cargo fmt --check`, clippy with `-D warnings`, `cargo test --features desktop`), builds the `.app` and `.dmg` without any signing key, creates the updater archive, and smoke-checks the bundle without launching it (Info.plist identity, version, minimum macOS and privacy strings; `codesign --verify --deep --strict`; ad-hoc signature and audio-input entitlement; `lipo` arm64 only; Mach-O minimum macOS 14.2; bundled FFmpeg identical to the verified build and able to encode and probe a file from inside the bundle; the archive unpacks to an identical, validly signed bundle; the disk image verifies, mounts and contains the same app). Ignored hardware tests run nowhere in CI.
+2. `media` rebuilds the pinned Windows FFmpeg tools on Ubuntu and verifies them. `windows` runs frontend/Rust/packaging checks and builds the installer without any signing key. `macos` (on `macos-15`, arm64) builds the macOS FFmpeg tools natively from the FFmpeg source archive the `media` job verified, runs the same checks where they apply (release unit tests, `npm run check`/`npm test`, `cargo fmt --check`, clippy with `-D warnings`, `cargo test --features desktop`), builds the `.app` and `.dmg` without any signing key, creates the updater archive, and smoke-checks the bundle without launching it (Info.plist identity, version, minimum macOS and privacy strings; `codesign --verify --deep --strict`; ad-hoc signature and audio-input entitlement; `lipo` arm64 only; Mach-O minimum macOS 14.2; bundled FFmpeg identical to the tools built in this job and able to encode and probe a file from inside the bundle; the archive unpacks to an identical, validly signed bundle; the disk image verifies, mounts and contains the same app). Ignored hardware tests run nowhere in CI.
 3. For a release, a separate step in each platform job that does nothing else signs the updater artifact with `tauri signer sign --app-version <version>`: the NSIS installer on Windows, `x-talk_<version>_aarch64.app.tar.gz` on macOS. These two steps are the only ones that receive `TAURI_SIGNING_PRIVATE_KEY`, so npm scripts, `build.rs` and proc-macros never see it. A following step (`scripts/release.py check-signature`) checks that each signature names the committed public key and is bound to the release version. Branch/PR checks do not receive this secret and build unsigned artifacts.
 4. `desktop` (Windows only; tauri-driver has no macOS support) exercises installed smoke, reinstall/uninstall persistence, offline desktop workflows, and updater fixtures. Main releases also verify a signed installer handoff through the native updater, automatic restart, and retained settings, history, audio, and credentials in a disposable hosted profile. The macOS update handoff has no automated test; see [macOS status](#macos-status-and-consequences).
-5. `release` runs only after a main push and only if `prepare`, `windows`, `desktop` and `macos` all succeeded, and only if the source revision is still main's head. `scripts/release.py publish-set` checks both platform artifact sets against their checksums, expected names, signatures and the pinned FFmpeg source, then writes one `latest.json` with `windows-x86_64` and `darwin-aarch64` entries and a `SHA256SUMS.txt` covering every asset. Existing published releases are never overwritten.
+5. `release` runs only after a main push and only if `prepare`, `windows`, `desktop` and `macos` all succeeded, and only if the source revision is still main's head. `scripts/release.py publish-set` checks both platform artifact sets against their checksums, expected names, signatures, the pinned FFmpeg source and (for macOS) the FFmpeg build manifest, then writes one `latest.json` with `windows-x86_64` and `darwin-aarch64` entries and a `SHA256SUMS.txt` covering every asset. Existing published releases are never overwritten.
 
 Release assets:
 
@@ -19,6 +19,7 @@ Release assets:
 | `x-talk_<version>_x64-setup.exe` and `.sig` | Windows installer; also the Windows updater artifact |
 | `x-talk_<version>_aarch64.dmg` | macOS download (ad-hoc signed app, not notarized) |
 | `x-talk_<version>_aarch64.app.tar.gz` and `.sig` | macOS updater artifact (the `.app` bundle, gzipped tar) |
+| `x-talk_<version>_aarch64_ffmpeg-build.json` | SHA-256 of the macOS `ffmpeg`/`ffprobe` in this release, with the source and recipe checksums and the Xcode/clang version that built them |
 | `latest.json` | Update feed for both platforms, with immutable tag URLs |
 | `x-talk_<version>_source.tar.gz` | Project source at the release tag |
 | `ffmpeg-<version>.tar.xz` | Exact FFmpeg source for the bundled tools on both platforms |
@@ -81,19 +82,14 @@ The Meetings media bundle includes audio decoding for AAC, MP3, FLAC, Opus, Vorb
 - **Windows** (`ffmpeg.exe`, `ffprobe.exe`): cross-built with MinGW-w64 on Linux/WSL (`scripts/build-media.sh`), statically linked. The recipe and its pinned checksums are unchanged by macOS support.
 - **macOS** (`ffmpeg`, `ffprobe`): built natively on Apple Silicon by the same script (`uname` selects the platform), arm64 only, deployment target macOS 14.2, with the FFmpeg libraries linked statically and only macOS system libraries linked dynamically; the script fails on any other dependency (`otool -L`, so never Homebrew), on a different architecture or minimum OS, and stubs pkg-config so no external library can be found. VideoToolbox, AudioToolbox and every other autodetected Apple framework stay disabled: the app needs only FFmpeg's own audio decoders, which keeps decoding identical on both platforms and avoids media-framework dependencies (the license posture would be the same either way, since system frameworks are not distributed). The stripped tools are ad-hoc signed (`codesign -s -`), which arm64 macOS requires.
 
-Each platform's checksums are recorded separately in the lock, and `src-tauri/binaries/NOTICE.txt` (shipped with both apps) lists the source, recipe and both platforms' checksums. `verify-media.py` (build/CI) and `verify-media.mjs` (`desktop:build`) check the tools for the host platform (Linux/WSL checks the Windows tools; set `XTALK_MEDIA_PLATFORM` to override) and fail when that platform has no recorded checksums. The corresponding source for both platforms is the published `ffmpeg-<version>.tar.xz` plus the recipe in the licenses-and-build archive.
+The two platforms are verified differently:
 
-The macOS checksums are tied to one Apple toolchain, the Xcode version in `media.lock.json` (`platforms.darwin-aarch64.xcode`). CI selects it with `DEVELOPER_DIR` and fails if the runner image lacks it; the build script refuses other Xcode versions unless `XTALK_MEDIA_ANY_XCODE=1` is set for an experiment.
+- **Windows tools are pinned.** The MinGW cross-build is reproducible, so its checksums are recorded in the lock (`platforms.windows-x86_64.binaries`) and listed in `src-tauri/binaries/NOTICE.txt`. Every build must reproduce them; `scripts/build-media.sh --record` re-pins after a deliberate change.
+- **macOS tools are verified per build, not pinned.** Apple's toolchain embeds its own version and the SDK in the binaries, and hosted runner images change Xcode versions without notice, so a committed checksum would make CI fail (and block every release) for reasons unrelated to the code. Instead, `scripts/build-media.sh` on a Mac always builds from the checksum-verified source with the committed recipe, checks the result (arm64 only, minimum macOS 14.2, only macOS system libraries, valid ad-hoc signature, runs), and writes `src-tauri/binaries/media-build.json` (git-ignored): the tools' SHA-256, the source and recipe checksums, and the toolchain. `verify-media.py`/`verify-media.mjs` (and so `desktop:build`/`desktop:debug`) accept only tools matching that manifest, built by the current recipe from the pinned source. In CI the same job builds the tools, bundles them, compares the bundled copies byte for byte with the build output, and `release.py` checks the updater archive against the manifest and publishes the manifest as `x-talk_<version>_aarch64_ffmpeg-build.json`. Any Xcode or Command Line Tools version works; no re-pinning is ever needed.
 
-### Recording or re-pinning the macOS tools
+`verify-media.py` (build/CI) and `verify-media.mjs` (`desktop:build`) check the tools for the host platform (Linux/WSL checks the Windows tools; set `XTALK_MEDIA_PLATFORM` to override). The corresponding source for both platforms is the published `ffmpeg-<version>.tar.xz` plus the recipe in the licenses-and-build archive.
 
-Needed once for the first macOS build, and again whenever the Xcode pin, FFmpeg version or component list changes:
-
-1. Change the pin if needed and push the branch. The `macos` job fails at **Build bundled media tools** with "No recorded media checksums" (or a mismatch), prints the built checksums, and uploads the tools as the `media-macos-aarch64` artifact.
-2. Download that artifact into `src-tauri/binaries/` and run `python3 scripts/verify-media.py --platform darwin-aarch64 --record` (any OS). On an Apple Silicon Mac with the pinned Xcode, `scripts/build-media.sh --record` does the build and record in one step.
-3. Review the diff of `scripts/media.lock.json` and `src-tauri/binaries/NOTICE.txt`, commit both, and push. The next run rebuilds from source and must reproduce the recorded checksums; if two runs on the same runner image disagree, the build is not deterministic and must be fixed before release.
-
-When GitHub drops the pinned Xcode from `macos-15` (the job fails at **Confirm Apple Silicon runner** and lists installed versions), update `xcode` and the `description` in the lock and re-record. Moving to a new runner image label is a deliberate change in the workflow.
+The trade-off: a macOS release proves which source and recipe produced its tools and that the shipped bytes are the ones built in that run, but not that an independent rebuild reproduces them byte for byte. That is the same assurance the app executable itself has. If you want more, add GitHub artifact attestations (`actions/attest-build-provenance`) for the `.dmg` and updater archive later.
 
 ## Signing and recovery
 
@@ -104,7 +100,7 @@ Updater signing is separate from operating-system code signing. Windows still se
 CI does not use `src-tauri/tauri.release.conf.json` (`createUpdaterArtifacts` makes `tauri build` require the private key, and on macOS would also produce a differently named archive). For local signed packaging, build normally and sign the updater artifact afterwards with `npm run tauri -- signer sign --app-version <version> <file>` (without `--app-version` clients reject the signature because `requireSignedVersion` is on). Then, from clean committed matching source:
 
 - Windows: `python scripts/release.py windows --updater --tag v<version> --installer <exe> --ffmpeg-source <archive> --output <empty-directory>`
-- macOS: `scripts/macos-bundle.sh`, sign the `.app.tar.gz`, then `python3 scripts/release.py macos --updater --tag v<version> --dmg <dmg> --app-archive <app.tar.gz> --output <empty-directory>`
+- macOS: `scripts/macos-bundle.sh`, sign the `.app.tar.gz`, then `python3 scripts/release.py macos --updater --tag v<version> --dmg <dmg> --app-archive <app.tar.gz> --media-manifest src-tauri/binaries/media-build.json --output <empty-directory>`
 - Combined release: `python3 scripts/release.py publish-set --tag v<version> --windows <dir> --macos <dir> --output <empty-directory>` writes `latest.json` and `SHA256SUMS.txt`.
 
 Normal `npm run desktop:build` remains available without private keys for contributors.
@@ -124,23 +120,23 @@ This needs an Apple Developer Program membership and a **Developer ID Applicatio
 
 - Signing: `APPLE_CERTIFICATE` (base64 of the exported `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (`Developer ID Application: <Name> (<TEAMID>)`), and in CI a `KEYCHAIN_PASSWORD` for the temporary keychain. Set `bundle.macOS.signingIdentity` in `tauri.macos.conf.json` to that identity (or remove `"-"` and rely on the variable).
 - Notarization: either an App Store Connect API key (`APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_PATH` to the `.p8`) or `APPLE_ID`, `APPLE_PASSWORD` (app-specific password) and `APPLE_TEAM_ID`.
-- Keep `hardenedRuntime: true` and the entitlements file. Notarization rejects unsigned or ad-hoc Mach-O files anywhere in the bundle, so `ffmpeg`/`ffprobe` must be signed with the Developer ID, `--options runtime` and `--timestamp` before bundling (or moved to Tauri's `externalBin`, which the bundler signs). Their bytes then change: verify the unsigned build against the lock first, sign afterwards, and teach `release.py` and `macos-bundle.sh` to compare the code without its signature.
+- Keep `hardenedRuntime: true` and the entitlements file. Notarization rejects unsigned or ad-hoc Mach-O files anywhere in the bundle, so `ffmpeg`/`ffprobe` must be signed with the Developer ID, `--options runtime` and `--timestamp` before bundling (or moved to Tauri's `externalBin`, which the bundler signs). Their bytes then change: write the build manifest after signing (or teach `release.py` and `macos-bundle.sh` to compare the code without its signature).
 - Store the certificate and notarization credentials as secrets of a GitHub Environment restricted to `main`, and expose them only to the signing/notarizing steps. Because Tauri signs during `tauri build`, keeping the build step secret-free means building unsigned, then signing, notarizing (`xcrun notarytool submit --wait`) and stapling (`xcrun stapler staple`) the `.app` in a separate step, and producing the `.dmg` afterwards (for example with `tauri bundle --bundles dmg`) and notarizing it too. Create the updater archive from the stapled app.
 - Then remove the Open Anyway instructions from README and update the consequences above. A Developer ID identity also gives the app a stable code identity, so permissions and Keychain access survive updates (after one final re-approval).
 
 ### Local macOS build
 
-On an Apple Silicon Mac with macOS 14.2+, Xcode (the version pinned in `media.lock.json` for reproducible media), Rust 1.93.1, Node.js 24.11.1 and Python 3.11+:
+On an Apple Silicon Mac with macOS 14.2+, Xcode or the Command Line Tools (any recent version), Rust (rustup installs the pinned 1.93.1), Node.js 24.11.1 and Python 3.11+:
 
 ```sh
 npm ci
-DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer scripts/build-media.sh   # pinned tools
+scripts/build-media.sh                 # native ffmpeg/ffprobe and src-tauri/binaries/media-build.json
 python3 scripts/generate-notices.py
-MACOSX_DEPLOYMENT_TARGET=14.2 npm run desktop:build    # .app and .dmg, ad-hoc signed
-scripts/macos-bundle.sh                                # updater archive and smoke checks
+npm run desktop:build                  # .app and .dmg, ad-hoc signed
+scripts/macos-bundle.sh                # updater archive and smoke checks
 ```
 
-For day-to-day development, Homebrew's FFmpeg is enough (see README); `desktop:build` deliberately refuses unpinned media tools.
+For day-to-day development, Homebrew's FFmpeg is enough (see README); `desktop:build` deliberately refuses tools that `scripts/build-media.sh` did not build.
 
 ### Recommended repository settings
 

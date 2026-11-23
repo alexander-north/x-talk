@@ -316,21 +316,15 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - name: Confirm Apple Silicon runner and select the pinned Xcode
+      # The image's default Xcode is used; the media build records it in its manifest.
+      - name: Confirm Apple Silicon runner
         run: |
           sw_vers
           if [ "$(uname -m)" != arm64 ] || [ "$(sysctl -n hw.optional.arm64)" != 1 ]; then
             echo "::error::Expected an arm64 macOS runner, got $(uname -m)"; exit 1
           fi
-          # The macOS media checksums in media.lock.json are tied to this Xcode.
-          xcode=$(python3 -c 'import json; print(json.load(open("scripts/media.lock.json"))["platforms"]["darwin-aarch64"]["xcode"])')
-          developer="/Applications/Xcode_${xcode}.app/Contents/Developer"
-          if [ ! -d "$developer" ]; then
-            ls -d /Applications/Xcode*.app || true
-            echo "::error::Xcode $xcode is not installed on this runner image; see docs/RELEASING.md"; exit 1
-          fi
-          echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
-          DEVELOPER_DIR="$developer" xcodebuild -version
+          xcodebuild -version
+          clang --version
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ffmpeg-source
@@ -341,8 +335,9 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-      # Native arm64 build from the same pinned source and component set as Windows; checked
-      # against the macOS checksums in media.lock.json (fails until they are recorded).
+      # Native arm64 build from the same checksum-verified source and component set as Windows. Not
+      # pinned: the tools built here are the ones shipped, and their checksums (with the source,
+      # recipe and toolchain) go into media-build.json, which packaging verifies and publishes.
       - name: Build bundled media tools
         run: bash scripts/build-media.sh
       - name: Keep media build evidence
@@ -356,6 +351,7 @@ jobs:
           path: |
             src-tauri/binaries/ffmpeg
             src-tauri/binaries/ffprobe
+            src-tauri/binaries/media-build.json
             .tmp/ffmpeg-config.log
       - run: python -X warn_default_encoding -W error::EncodingWarning scripts/generate-notices.py
       - name: Verify release metadata
@@ -405,7 +401,7 @@ jobs:
           version=$(python -c 'import json; print(json.load(open("package.json"))["version"])')
           updater=()
           if [ -n "$RELEASE_TAG" ]; then updater=(--updater); fi
-          python scripts/release.py macos "${updater[@]}" --tag "v$version" --dmg "src-tauri/target/release/bundle/dmg/x-talk_${version}_aarch64.dmg" --app-archive "src-tauri/target/release/bundle/macos/x-talk_${version}_aarch64.app.tar.gz" --output .tmp/release-assets
+          python scripts/release.py macos "${updater[@]}" --tag "v$version" --dmg "src-tauri/target/release/bundle/dmg/x-talk_${version}_aarch64.dmg" --app-archive "src-tauri/target/release/bundle/macos/x-talk_${version}_aarch64.app.tar.gz" --media-manifest src-tauri/binaries/media-build.json --output .tmp/release-assets
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: x-talk-macos-aarch64
@@ -452,7 +448,13 @@ jobs:
           python3 scripts/release.py --tag "$RELEASE_TAG"
           # Only the latest main revision may become the update feed.
           test "$(gh api "repos/$GH_REPO/commits/main" --jq .sha)" = "$MAIN_SHA"
-          # A successful rerun does not overwrite an existing published release.
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then exit 0; fi
+          # A successful rerun does not overwrite an existing published release. gh uploads assets to a
+          # draft and publishes it last, so a draft means an interrupted upload: fail instead of passing.
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" = true ]; then
+              echo "::error::Draft release $RELEASE_TAG exists from an interrupted upload; delete it and re-run this job"; exit 1
+            fi
+            exit 0
+          fi
           test -f .tmp/release-assets/latest.json
           gh release create "$RELEASE_TAG" .tmp/release-assets/* --latest --verify-tag --title "x-talk $RELEASE_TAG" --notes-file docs/RELEASE_NOTES.md

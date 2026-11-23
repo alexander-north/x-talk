@@ -2,7 +2,7 @@
 
   release.py [--tag TAG]                  check that every version file agrees (and matches TAG)
   release.py windows --tag TAG --installer EXE --ffmpeg-source ARCHIVE --output DIR [--updater]
-  release.py macos --tag TAG --dmg DMG --app-archive TAR_GZ --output DIR [--updater]
+  release.py macos --tag TAG --dmg DMG --app-archive TAR_GZ --media-manifest JSON --output DIR [--updater]
   release.py publish-set --tag TAG --windows DIR --macos DIR --output DIR
   release.py check-signature --platform {windows,macos} --version VERSION SIGNATURE
 
@@ -24,7 +24,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 DOWNLOAD_URL = 'https://github.com/alexander-north/x-talk/releases/download'
@@ -63,6 +62,7 @@ def tauri_config(root=ROOT, platform=None):
 
 
 def version(root=ROOT, tag=None):
+    import tomllib  # Python 3.11+; imported here so the other helpers work on older interpreters
     package = json.loads((root / 'package.json').read_text(encoding='utf-8'))
     lock = json.loads((root / 'package-lock.json').read_text(encoding='utf-8'))
     cargo = tomllib.loads((root / 'src-tauri/Cargo.toml').read_text(encoding='utf-8'))
@@ -109,6 +109,11 @@ def macos_names(current):
     return f'x-talk_{current}_aarch64.dmg', f'x-talk_{current}_aarch64.app.tar.gz'
 
 
+def macos_media_name(current):
+    # Named in src-tauri/binaries/NOTICE.txt (scripts/verify-media.py), which ships in the app.
+    return f'x-talk_{current}_aarch64_ffmpeg-build.json'
+
+
 def shared_names(current, media):
     return {f'x-talk_{current}_source.tar.gz', f'x-talk_{current}_dependency-sources.tar.gz',
             f'x-talk_{current}_licenses-and-build.tar.gz', f"ffmpeg-{media['version']}.tar.xz"}
@@ -122,6 +127,38 @@ def media_binaries(media, platform):
     binaries = media['platforms'][MEDIA_PLATFORMS[platform]].get('binaries') or {}
     if not binaries:
         raise ValueError(f'No recorded media checksums for {MEDIA_PLATFORMS[platform]}')
+    return binaries
+
+
+def macos_media(root, manifest_path):
+    """Checksums of the macOS tools from the build manifest scripts/build-media.sh wrote in this run.
+
+    The macOS tools are not pinned in media.lock.json (Apple toolchains do not reproduce byte for byte
+    across Xcode and runner image updates). The manifest ties them to the pinned source archive and to
+    the build recipe at this commit; it is published with the release. If the lock ever pins them,
+    the manifest must also agree with the lock.
+    """
+    lock = media_lock(root)
+    platform = MEDIA_PLATFORMS['macos']
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        raise ValueError(f'Missing or malformed macOS media build manifest: {manifest_path.name}') from error
+    names = {'ffmpeg', 'ffprobe'}
+    if not isinstance(manifest, dict):
+        raise ValueError('Malformed macOS media build manifest')
+    binaries = manifest.get('binaries')
+    if (manifest.get('platform') != platform or manifest.get('version') != lock['version']
+            or manifest.get('sourceSha256') != lock['sourceSha256']):
+        raise ValueError('macOS media was not built from the pinned FFmpeg source')
+    if manifest.get('recipeSha256') != sha256(root / 'scripts/build-media.sh'):
+        raise ValueError('macOS media was built with a different scripts/build-media.sh')
+    if (not isinstance(binaries, dict) or set(binaries) != names
+            or not all(isinstance(d, str) and re.fullmatch(r'[0-9a-f]{64}', d) for d in binaries.values())):
+        raise ValueError('Malformed macOS media build manifest')
+    pinned = lock['platforms'][platform].get('binaries')
+    if pinned is not None and pinned != binaries:
+        raise ValueError('macOS media differs from the checksums pinned in media.lock.json')
     return binaries
 
 
@@ -209,7 +246,7 @@ def check_dmg(dmg):
             raise ValueError('Disk image is not a macOS UDIF image')
 
 
-def check_app_archive(root, archive, current):
+def check_app_archive(root, archive, current, media):
     """Validate the macOS updater archive the way tauri-plugin-updater will unpack it.
 
     The plugin drops the first path component of every entry and installs the rest as the app
@@ -217,7 +254,6 @@ def check_app_archive(root, archive, current):
     """
     config = tauri_config(root, 'macos')
     top = f"{config['productName']}.app"
-    media = media_binaries(media_lock(root), 'macos')
     with tarfile.open(archive, 'r:gz') as bundle:
         members = {}
         for member in bundle.getmembers():
@@ -309,8 +345,8 @@ def assemble(root, installer, source, output, tag, updater=False):
     return current
 
 
-def package_macos(root, dmg, app_archive, output, tag, updater=False):
-    """macOS platform assets: the disk image, the updater archive and its signature."""
+def package_macos(root, dmg, app_archive, media_manifest, output, tag, updater=False):
+    """macOS platform assets: the disk image, the updater archive and its signature, and the FFmpeg build manifest."""
     current = version(root, tag)
     dmg_name, archive_name = macos_names(current)
     if dmg.name != dmg_name or not dmg.is_file():
@@ -318,7 +354,7 @@ def package_macos(root, dmg, app_archive, output, tag, updater=False):
     if app_archive.name != archive_name or not app_archive.is_file():
         raise ValueError(f'Expected updater archive {archive_name}')
     check_dmg(dmg)
-    check_app_archive(root, app_archive, current)
+    check_app_archive(root, app_archive, current, macos_media(root, media_manifest))
     signature = Path(str(app_archive) + '.sig')
     if updater:
         read_signature(signature)
@@ -326,6 +362,7 @@ def package_macos(root, dmg, app_archive, output, tag, updater=False):
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dmg, output / dmg_name)
     shutil.copy2(app_archive, output / archive_name)
+    shutil.copy2(media_manifest, output / macos_media_name(current))
     if updater:
         shutil.copy2(signature, output / signature.name)
     write_checksums(output)
@@ -340,7 +377,7 @@ def publish_set(root, tag, windows, macos, output):
     dmg_name, archive_name = macos_names(current)
     expected = {
         'Windows': (windows, shared_names(current, media) | {installer, installer + '.sig'}),
-        'macOS': (macos, {dmg_name, archive_name, archive_name + '.sig'}),
+        'macOS': (macos, {dmg_name, archive_name, archive_name + '.sig', macos_media_name(current)}),
     }
     for label, (directory, names) in expected.items():
         present = verified_files(directory, label)
@@ -349,7 +386,7 @@ def publish_set(root, tag, windows, macos, output):
             raise ValueError(f'Incomplete {label} release assets; missing {missing}, unexpected {unexpected}')
     check_installer(windows / installer)
     check_dmg(macos / dmg_name)
-    check_app_archive(root, macos / archive_name, current)
+    check_app_archive(root, macos / archive_name, current, macos_media(root, macos / macos_media_name(current)))
     if sha256(windows / f"ffmpeg-{media['version']}.tar.xz") != media['sourceSha256']:
         raise ValueError('FFmpeg source checksum mismatch')
     platforms = {}
@@ -390,6 +427,8 @@ def main(argv=None):
     macos = commands.add_parser('macos', help='Package macOS release assets')
     macos.add_argument('--dmg', type=Path, required=True)
     macos.add_argument('--app-archive', type=Path, required=True)
+    macos.add_argument('--media-manifest', type=Path, required=True,
+                       help='src-tauri/binaries/media-build.json from scripts/build-media.sh')
     for command in (windows, macos):
         command.add_argument('--tag', required=True)
         command.add_argument('--output', type=Path, required=True)
@@ -418,7 +457,8 @@ def main(argv=None):
     if args.command == 'windows':
         current = assemble(ROOT, args.installer, args.ffmpeg_source, args.output, args.tag, args.updater)
     elif args.command == 'macos':
-        current = package_macos(ROOT, args.dmg, args.app_archive, args.output, args.tag, args.updater)
+        current = package_macos(ROOT, args.dmg, args.app_archive, args.media_manifest, args.output, args.tag,
+                                args.updater)
     else:
         current = publish_set(ROOT, args.tag, args.windows, args.macos, args.output)
     print(f'Release assets assembled: v{current}')

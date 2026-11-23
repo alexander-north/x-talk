@@ -75,16 +75,21 @@ fn missing_microphone_fails_start_without_a_journal() {
 }
 
 #[test]
-fn missing_output_fails_before_creating_a_tap() {
+fn missing_output_fails_start_without_a_journal() {
     let dir = tempfile::tempdir().unwrap();
+    let capture = dir.path().join("capture");
     let error = Session::start(
         uuid::Uuid::new_v4().to_string(),
-        dir.path().join("capture"),
+        capture.clone(),
         options(None, Some("coreaudio:xtalk-test-missing-output")),
     )
     .err()
     .expect("an unknown output device must not start");
-    assert!(!error.message.is_empty());
+    assert!(error.message.contains("output device"), "{}", error.message);
+    assert!(
+        !capture.join("capture.json").exists(),
+        "no recoverable journal for a capture that never started"
+    );
 }
 
 #[test]
@@ -205,7 +210,7 @@ async fn macos_dual_source_stop_saves_timed_audio() {
 
 #[test]
 #[ignore = "opens the Mac's default devices and needs both audio permissions; coordinate with the owner"]
-fn macos_device_switches_keep_the_timeline_and_release_taps() {
+fn macos_device_switches_keep_the_timeline_aligned() {
     let dir = tempfile::tempdir().unwrap();
     let session = Session::start(
         uuid::Uuid::new_v4().to_string(),
@@ -221,7 +226,8 @@ fn macos_device_switches_keep_the_timeline_and_release_taps() {
     session.system_muted.store(true, Ordering::Release);
     session.change_device(true, None).unwrap();
     for _ in 0..5 {
-        // Repeated tap switches must not leak private aggregate devices.
+        // Repeated tap switches (each creates and destroys a tap and an
+        // aggregate device) keep recording.
         session.change_device(false, None).unwrap();
     }
     std::thread::sleep(Duration::from_millis(600));

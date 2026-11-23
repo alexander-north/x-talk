@@ -718,20 +718,58 @@ struct Source {
     progress_at: f64,
     checked_at: f64,
     permission_at: f64,
+    /// Device rate and channel count the track was planned from.
+    device_format: (f64, u32),
+    /// System source on the system default output (no explicit selection):
+    /// the last default output seen, so a change is acted on once.
+    follow_default: bool,
+    last_default: AudioObjectID,
+    default_at: f64,
+}
+/// The selected device, or the current system default.
+fn resolve(microphone: bool, selected: Option<&str>) -> Result<AudioObjectID> {
+    match neutral::coreaudio_uid(selected) {
+        Some(uid) => device_for_uid(uid, microphone),
+        None => default_device(microphone),
+    }
+}
+fn same_rate(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 0.5
 }
 impl Source {
     fn open(microphone: bool, selected: Option<&str>) -> Result<Self> {
-        let device = match neutral::coreaudio_uid(selected) {
-            Some(uid) => device_for_uid(uid, microphone)?,
-            None => default_device(microphone)?,
-        };
+        let device = resolve(microphone, selected)?;
+        let follow_default = !microphone && neutral::coreaudio_uid(selected).is_none();
+        Self::open_device(microphone, device, follow_default)
+    }
+    fn open_device(microphone: bool, device: AudioObjectID, follow_default: bool) -> Result<Self> {
         let (capture_device, tap, rate, channels) = if microphone {
             let (rate, channels) = input_format(device)?;
             microphone_permission()?;
             (device, None, rate, channels)
         } else {
             let tap = SystemTap::create(&device_uid(device)?)?;
-            let (rate, channels) = (tap.format.mSampleRate, tap.format.mChannelsPerFrame);
+            // The IO proc receives the aggregate device's input stream format,
+            // which is not guaranteed to equal the tap format (a tap-only
+            // aggregate may run at its own rate and resample the drift-
+            // compensated tap). Prefer what the aggregate reports; fall back to
+            // the tap format while its streams are not yet published.
+            let tap_format = (tap.format.mSampleRate, tap.format.mChannelsPerFrame);
+            let (rate, channels) = match input_format(tap.aggregate) {
+                Ok((rate, channels)) if rate > 0.0 => {
+                    if (rate - tap_format.0).abs() > 0.5 || channels != tap_format.1 {
+                        tracing::info!(
+                            tap_rate = tap_format.0,
+                            tap_channels = tap_format.1,
+                            rate,
+                            channels,
+                            "meeting_system_format_differs_from_tap"
+                        );
+                    }
+                    (rate, channels)
+                }
+                _ => tap_format,
+            };
             (tap.aggregate, Some(tap), rate, channels)
         };
         let format = neutral::plan_format(rate, channels)?;
@@ -763,12 +801,62 @@ impl Source {
             progress_at: 0.0,
             checked_at: 0.0,
             permission_at: 0.0,
+            device_format: (rate, channels),
+            follow_default,
+            last_default: device,
+            default_at: 0.0,
         })
     }
     fn start(&mut self, elapsed: f64) -> Result<()> {
         self.progress_at = elapsed;
         self.checked_at = elapsed;
         self.io.start()
+    }
+    /// True while the device still runs in the format this source was planned
+    /// from (a Bluetooth headset changes rate when its microphone starts).
+    fn format_current(&self) -> bool {
+        let nominal = match (self.nominal, nominal_rate(self.watched)) {
+            (Some(expected), Ok(rate)) => same_rate(expected, rate),
+            _ => true,
+        };
+        nominal
+            && (!self.microphone
+                || input_format(self.watched).is_ok_and(|(rate, channels)| {
+                    same_rate(rate, self.device_format.0) && channels == self.device_format.1
+                }))
+    }
+    /// Drop audio captured before the recording epoch and restart the
+    /// health clocks at `elapsed`.
+    fn reset(&mut self, elapsed: f64) {
+        let shared = &self.io.shared;
+        // Pop whole packets, exactly as `drain` does, so a packet the IO
+        // thread is writing right now keeps its samples.
+        while let Some(packet) = shared.packets.pop() {
+            for _ in 0..packet.frames as usize * shared.keep {
+                let _ = shared.samples.pop();
+            }
+        }
+        shared.overruns.store(0, Ordering::Relaxed);
+        self.clock.reset();
+        self.rate.reset();
+        self.progress_at = elapsed;
+        self.checked_at = elapsed;
+        self.permission_at = elapsed;
+        self.default_at = elapsed;
+    }
+    /// For a system source that follows the default output: the new default
+    /// output, once, after the user switched output devices.
+    fn default_moved(&mut self, elapsed: f64) -> Option<AudioObjectID> {
+        if !self.follow_default || elapsed - self.default_at < 0.5 {
+            return None;
+        }
+        self.default_at = elapsed;
+        let current = default_device(false).ok()?;
+        if current == self.last_default {
+            return None;
+        }
+        self.last_default = current;
+        Some(current)
     }
     fn drain(
         &mut self,
@@ -864,42 +952,136 @@ impl Source {
     }
 }
 
+/// Upper bound for letting devices settle at start, well inside the 15 s
+/// start handshake of `Session::start`.
+const SETTLE_BUDGET: Duration = Duration::from_secs(8);
+/// A device rate unchanged for this long counts as settled.
+const SETTLE_STABLE: Duration = Duration::from_millis(300);
+
+/// Returns once `device`'s nominal rate has been unchanged for
+/// [`SETTLE_STABLE`], at the deadline, or when start is abandoned.
+fn wait_stable_rate(device: AudioObjectID, deadline: Instant, stop: &AtomicBool) {
+    let mut last = nominal_rate(device).ok();
+    let mut since = Instant::now();
+    while since.elapsed() < SETTLE_STABLE
+        && Instant::now() < deadline
+        && !stop.load(Ordering::Acquire)
+    {
+        std::thread::sleep(Duration::from_millis(20));
+        let now = nominal_rate(device).ok();
+        let unchanged = match (last, now) {
+            (Some(a), Some(b)) => same_rate(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if !unchanged {
+            last = now;
+            since = Instant::now();
+        }
+    }
+}
+
+/// Opens and starts one source and lets its device settle. Starting a
+/// Bluetooth headset's microphone switches it to the hands-free profile,
+/// which changes the rate of both its input and its output; the profile is
+/// active once input data arrives. A source whose device changed format while
+/// settling is rebuilt once, so the journal records the format it runs in.
+fn open_settled(
+    microphone: bool,
+    selected: Option<&str>,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<Source> {
+    let device = resolve(microphone, selected)?;
+    let follow_default = !microphone && neutral::coreaudio_uid(selected).is_none();
+    if !microphone {
+        // Let a microphone started just before change this device first.
+        wait_stable_rate(device, deadline, stop);
+    }
+    let mut source = Source::open_device(microphone, device, follow_default)?;
+    source.start(0.0)?;
+    for rebuilt in [false, true] {
+        if microphone {
+            while source.io.shared.callbacks.load(Ordering::Relaxed) == 0
+                && Instant::now() < deadline
+                && !stop.load(Ordering::Acquire)
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        wait_stable_rate(device, deadline, stop);
+        if rebuilt || stop.load(Ordering::Acquire) || source.format_current() {
+            break;
+        }
+        tracing::info!(microphone, "meeting_source_rebuilt_after_format_change");
+        // Release the old IO proc (and tap) before opening the replacement.
+        drop(source);
+        source = Source::open_device(microphone, device, follow_default)?;
+        source.start(0.0)?;
+    }
+    Ok(source)
+}
+
 struct Input {
     source: Source,
     writer: TrackWriter,
 }
 impl Input {
-    fn open(
-        directory: Option<&std::path::Path>,
-        microphone: bool,
-        selected: Option<&str>,
-    ) -> Result<Self> {
-        let source = Source::open(microphone, selected)?;
-        let writer = TrackWriter::create(directory, source.track.clone(), !microphone)?;
+    fn new(source: Source, directory: Option<&std::path::Path>) -> Result<Self> {
+        let writer = TrackWriter::create(directory, source.track.clone(), !source.microphone)?;
         Ok(Self { source, writer })
     }
     fn drain(&mut self, epoch: u64, muted: bool, elapsed: f64) -> Result<f32> {
         self.source.drain(&mut self.writer, epoch, muted, elapsed)
     }
+    /// Replace the device of a running track. The writer stays with the track:
+    /// a failed change cannot truncate or reformat the saved audio, and
+    /// host-time packet stamps keep the common timeline across the switch
+    /// (the gap becomes silence and overlap is skipped).
+    fn switch(
+        &mut self,
+        device: Option<&str>,
+        epoch: u64,
+        muted: bool,
+        elapsed: f64,
+    ) -> Result<()> {
+        let microphone = self.writer.track.microphone;
+        let mut next = Source::open(microphone, device)?;
+        super::compatible_format(&self.writer.track, &next.track)?;
+        next.start(elapsed)?;
+        next.reset(elapsed);
+        self.source.drain(&mut self.writer, epoch, muted, elapsed)?;
+        self.source = next;
+        Ok(())
+    }
 }
 
-fn open_inputs(options: &Options, directory: Option<&std::path::Path>) -> Result<Vec<Input>> {
-    let mut inputs = Vec::new();
+/// Microphone first, then system audio: the tap is created only after the
+/// microphone's device has settled, so a headset's profile switch cannot
+/// change the tapped output underneath it.
+fn open_sources(options: &Options, stop: &AtomicBool) -> Result<Vec<Source>> {
+    let deadline = Instant::now() + SETTLE_BUDGET;
+    let mut sources = Vec::new();
     if options.microphone {
-        inputs.push(Input::open(
-            directory,
+        sources.push(open_settled(
             true,
             options.microphone_device.as_deref(),
+            deadline,
+            stop,
         )?);
     }
     if options.system {
-        inputs.push(Input::open(
-            directory,
+        sources.push(open_settled(
             false,
             options.output_device.as_deref(),
+            deadline,
+            stop,
         )?);
     }
-    Ok(inputs)
+    Ok(sources)
+}
+
+fn default_output_warning() -> String {
+    "System audio moved to another output device that this recording could not switch to, so it is not being recorded. Switch the output back in System Settings > Sound, or stop and start a new recording.".into()
 }
 
 fn silent_system(inputs: &[Input], system_muted: bool) -> bool {
@@ -915,11 +1097,14 @@ pub fn monitor(
     stop: Arc<AtomicBool>,
     renewed: Arc<Mutex<Instant>>,
 ) -> Result<()> {
-    let mut inputs = open_inputs(&options, None)?;
+    let mut inputs = open_sources(&options, &stop)?
+        .into_iter()
+        .map(|source| Input::new(source, None))
+        .collect::<Result<Vec<_>>>()?;
     let epoch = now_nanos();
     let clock = Instant::now();
     for input in &mut inputs {
-        input.source.start(0.0)?;
+        input.source.reset(0.0);
     }
     while !stop.load(Ordering::Acquire)
         && renewed
@@ -932,6 +1117,14 @@ pub fn monitor(
         };
         for input in &mut inputs {
             let elapsed = clock.elapsed().as_secs_f64();
+            if input.source.default_moved(elapsed).is_some() {
+                // The preview has no saved format to keep: follow the new
+                // default output in whatever format it runs.
+                let mut source = Source::open(false, None)?;
+                source.start(elapsed)?;
+                source.reset(elapsed);
+                *input = Input::new(source, None)?;
+            }
             input.source.health(elapsed)?;
             let level = input.drain(epoch, false, elapsed)?;
             if input.writer.track.microphone {
@@ -969,7 +1162,11 @@ pub fn record(
             "Free some disk space before recording a meeting.",
         ));
     }
-    let mut inputs = open_inputs(&options, Some(&directory))?;
+    let sources = open_sources(&options, &stop)?;
+    let mut inputs = Vec::new();
+    for source in sources {
+        inputs.push(Input::new(source, Some(&directory))?);
+    }
     let muted = |microphone: bool| {
         if microphone {
             mic_muted.load(Ordering::Acquire)
@@ -988,10 +1185,12 @@ pub fn record(
     };
     let journal_path = directory.join("capture.json");
     crate::storage::publish_journal(&journal_path, &serde_json::to_vec(&journal)?)?;
+    // Devices already run (they were started to settle); the timeline starts
+    // here and earlier audio is dropped.
     let epoch = now_nanos();
     let clock = Instant::now();
     for input in &mut inputs {
-        input.source.start(0.0)?;
+        input.source.reset(0.0);
     }
     if stop.load(Ordering::Acquire) {
         // The start handshake timed out (for example while a permission prompt
@@ -1008,35 +1207,54 @@ pub fn record(
     let _ = ready.send(Ok(()));
     let mut last_sync = Instant::now();
     let mut failure = None;
+    // Set while the default output moved to a device the system track could
+    // not follow (for example another sample rate).
+    let mut default_warning: Option<String> = None;
     while !stop.load(Ordering::Acquire)
         && clock.elapsed().as_secs_f64() < crate::meetings::domain::MAX_SECONDS
     {
         while let Ok(change) = changes.try_recv() {
-            let result = (|| -> Result<()> {
-                let old = inputs
-                    .iter_mut()
-                    .find(|input| input.writer.track.microphone == change.microphone)
-                    .ok_or_else(|| {
-                        AppError::input("This source was not enabled when recording started.")
-                    })?;
-                // The writer stays with the track: a failed change cannot
-                // truncate or reformat the saved audio.
-                let mut next = Source::open(change.microphone, change.device.as_deref())?;
-                super::compatible_format(&old.writer.track, &next.track)?;
-                let elapsed = clock.elapsed().as_secs_f64();
-                next.start(elapsed)?;
-                old.source
-                    .drain(&mut old.writer, epoch, muted(change.microphone), elapsed)?;
-                // Host-time packet stamps keep the common timeline across the
-                // switch: the gap becomes silence and overlap is skipped.
-                old.source = next;
-                Ok(())
-            })();
+            let result = inputs
+                .iter_mut()
+                .find(|input| input.writer.track.microphone == change.microphone)
+                .ok_or_else(|| {
+                    AppError::input("This source was not enabled when recording started.")
+                })
+                .and_then(|input| {
+                    input.switch(
+                        change.device.as_deref(),
+                        epoch,
+                        muted(change.microphone),
+                        clock.elapsed().as_secs_f64(),
+                    )
+                });
+            if result.is_ok() && !change.microphone {
+                default_warning = None;
+            }
             let _ = change.reply.send(result);
         }
         let result: Result<()> = (|| {
             for input in &mut inputs {
                 let elapsed = clock.elapsed().as_secs_f64();
+                if let Some(device) = input.source.default_moved(elapsed) {
+                    if device == input.source.watched {
+                        default_warning = None;
+                    } else {
+                        match input.switch(None, epoch, muted(false), elapsed) {
+                            Ok(()) => {
+                                tracing::info!("meeting_system_followed_default_output");
+                                default_warning = None;
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    category = error.category,
+                                    "meeting_system_default_output_not_followed"
+                                );
+                                default_warning = Some(default_output_warning());
+                            }
+                        }
+                    }
+                }
                 input.source.health(elapsed)?;
                 let level = input.drain(epoch, muted(input.writer.track.microphone), elapsed)?;
                 if let Ok(mut state) = status.lock() {
@@ -1052,12 +1270,16 @@ pub fn record(
                 .iter()
                 .map(|input| input.writer.discontinuities)
                 .sum();
-            journal.warning = neutral::capture_warning(
+            let warning = neutral::capture_warning(
                 "macOS",
                 glitches,
                 silent_system(&inputs, muted(false)),
                 &silent_system_hint(),
             );
+            journal.warning = match (warning, &default_warning) {
+                (Some(warning), Some(moved)) => Some(format!("{moved} {warning}")),
+                (warning, moved) => warning.or_else(|| moved.clone()),
+            };
             if let Ok(mut state) = status.lock() {
                 state.spectrum =
                     crate::spectrum::combine(inputs.iter().map(|input| &input.writer.spectrum))

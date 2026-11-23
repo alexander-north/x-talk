@@ -40,9 +40,9 @@ Tested on Windows 10 Pro x64; Windows 11 hasn't had a separate hardware acceptan
 
 The Mac app isn't signed with an Apple Developer ID or notarized, so macOS blocks the first launch. To open it:
 
-1. Open x-talk from **Applications**. macOS says it can't verify the app; click **Done** (not Move to Trash).
-2. Open **System Settings → Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the x-talk message. Confirm with your password or Touch ID.
-3. Click **Open** in the dialog that follows. Later launches open normally.
+1. Open x-talk from **Applications**. macOS says it can't verify the app; close the message with **Done** (or **Cancel**), not Move to Trash.
+2. Open **System Settings → Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the x-talk message.
+3. In the dialog that follows, click **Open Anyway** (on macOS 14, **Open**) and confirm with your password or Touch ID if asked. Later launches open normally.
 
 Only do this for a download from this project's Releases page, and check it against `SHA256SUMS.txt` first. Don't turn off Gatekeeper or other macOS security protections.
 
@@ -110,7 +110,7 @@ npm run desktop:dev
 - `npm run desktop:build`: Windows installer in `src-tauri/target/release/bundle/nsis/`, or on a Mac the app and disk image in `src-tauri/target/release/bundle/macos/` and `bundle/dmg/`.
 - Linux core tests: `cargo test --manifest-path src-tauri/Cargo.toml --locked`, with system FFmpeg installed.
 
-**Mac (Apple Silicon, macOS 14.2+):** install the Xcode Command Line Tools (`xcode-select --install`), Rust 1.93.1 via rustup, Node.js 24.11.1, Python 3.11+, and [Homebrew](https://brew.sh) FFmpeg for development:
+**Mac (Apple Silicon, macOS 14.2+):** install Xcode or just the Command Line Tools (`xcode-select --install`; any recent version), Rust via [rustup](https://rustup.rs) (the repository pins 1.93.1), Node.js 24.11.1, Python 3.11+, and [Homebrew](https://brew.sh) FFmpeg for development:
 
 ```sh
 brew install ffmpeg
@@ -123,7 +123,17 @@ cargo test --manifest-path src-tauri/Cargo.toml --features desktop --locked
 npm run desktop:dev
 ```
 
-The Tauri build needs files at the bundled tool paths; debug builds treat these empty placeholders as missing and use Homebrew's `ffmpeg`/`ffprobe` instead. `npm run desktop:build` and `desktop:debug` instead verify the pinned bundled tools, which `scripts/build-media.sh` builds natively on an Apple Silicon Mac; see [Releasing](docs/RELEASING.md). Desktop end-to-end tests run on Windows only.
+The Tauri build needs files at the bundled tool paths; debug builds treat these empty placeholders as missing and use Homebrew's `ffmpeg`/`ffprobe` instead.
+
+To build the real app, build the bundled media tools once (about five minutes; it replaces the placeholders), then package:
+
+```sh
+scripts/build-media.sh
+npm run desktop:build
+open src-tauri/target/release/bundle/macos/x-talk.app
+```
+
+`scripts/build-media.sh` builds `ffmpeg`/`ffprobe` from the checksum-verified FFmpeg source and records what it built in `src-tauri/binaries/media-build.json`; `desktop:build` and `desktop:debug` refuse any other tools (for example Homebrew's or the empty placeholders). Local builds are ad-hoc signed like the releases. Desktop end-to-end tests run on Windows only.
 
 For isolated desktop acceptance without microphone or provider requests, run in PowerShell on Windows:
 

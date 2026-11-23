@@ -111,7 +111,7 @@ pub async fn state(app: tauri::AppHandle) -> Result<State> {
         let s = app.state::<AppState>();
         let credentials = PROVIDERS
             .into_iter()
-            .map(|p| (p.into(), s.keys.get(p).is_ok()))
+            .map(|p| (p.into(), s.keys.exists(p).is_ok()))
             .collect();
         let result = Ok(State {
             settings: s.store.settings()?,
@@ -209,9 +209,9 @@ pub async fn do_capture(app: &tauri::AppHandle, action: &str) -> Result<()> {
             ensure_idle(&s)?;
             let settings = s.store.settings()?;
             let snapshot = s.store.snapshot()?;
-            s.keys.get(&snapshot.transcription.provider)?;
+            s.keys.exists(&snapshot.transcription.provider)?;
             if let Some(p) = &snapshot.preset {
-                s.keys.get(&p.provider)?;
+                s.keys.exists(&p.provider)?;
             }
             Action::Start {
                 snapshot: Box::new(snapshot),
@@ -259,9 +259,9 @@ pub async fn import_audio(app: tauri::AppHandle) -> Result<()> {
             }
             ensure_idle(&s)?;
             snapshot = s.store.snapshot()?;
-            s.keys.get(&snapshot.transcription.provider)?;
+            s.keys.exists(&snapshot.transcription.provider)?;
             if let Some(p) = &snapshot.preset {
-                s.keys.get(&p.provider)?;
+                s.keys.exists(&p.provider)?;
             }
             s.store.reserve(&reserve)?;
             s.import_cancel.store(false, Ordering::Release);
@@ -402,9 +402,9 @@ pub async fn retry(app: tauri::AppHandle, id: String, revision: u64, kind: Strin
         }
         let snap = Snapshot::capture(&settings, s.store.preset(&settings.preset_id)?);
         if kind == "transcribe" {
-            s.keys.get(&snap.transcription.provider)?;
+            s.keys.exists(&snap.transcription.provider)?;
         } else if let Some(p) = &snap.preset {
-            s.keys.get(&p.provider)?;
+            s.keys.exists(&p.provider)?;
         }
         s.store.retry(&id, revision, &kind, snap)?;
         s.wake.notify_one();
@@ -713,7 +713,7 @@ pub async fn test_transformation(
             ));
         }
         ensure_idle(&s)?;
-        s.keys.get(&preset.provider)?;
+        s.keys.exists(&preset.provider)?;
         let mut test = s
             .test
             .lock()

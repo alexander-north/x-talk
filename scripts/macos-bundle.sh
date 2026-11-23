@@ -58,7 +58,9 @@ if grep -q '^CodeDirectory.*flags=.*runtime' <<<"$details"; then
     fail 'hardened runtime without the com.apple.security.device.audio-input entitlement'
 fi
 
-# Bundled media: the verified pinned tools, runnable from inside the bundle, plus license files.
+# Bundled media: the tools scripts/build-media.sh built and verified (see its media-build.json),
+# runnable from inside the bundle, plus license files.
+python3 scripts/verify-media.py --platform darwin-aarch64
 resources="$app/Contents/Resources"
 for tool in ffmpeg ffprobe; do
   cmp -s "$resources/binaries/$tool" "src-tauri/binaries/$tool" || fail "bundled $tool differs from the verified build"

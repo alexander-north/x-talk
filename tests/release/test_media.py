@@ -1,4 +1,4 @@
-"""The media lock pins every platform's FFmpeg tools, and the shipped notice must describe it exactly."""
+"""The media lock pins the source and the Windows tools; macOS tools are verified per build. The shipped notice must match."""
 import hashlib
 import importlib.util
 import json
@@ -36,30 +36,66 @@ class MediaLockTests(unittest.TestCase):
             'ffmpeg.exe': '15ab01b2a95b529bb032841425f96510d85f8da807233a55a4a6f7b460c6d5fa',
             'ffprobe.exe': '93148b7a0537924be062920d278e1b092a91cb0f249c8929c6348bb61b8064e7'})
         self.assertIn(lock['sourceSha256'], notice)
+        # macOS tools are not pinned in git: each build is verified and published with its release.
+        self.assertNotIn('binaries', lock['platforms']['darwin-aarch64'])
+        self.assertIn('_aarch64_ffmpeg-build.json', notice)
 
-    def test_record_pins_one_platform_and_updates_notice(self):
+    def test_record_pins_windows_and_refuses_per_build_macos(self):
+        for name in ['ffmpeg.exe', 'ffprobe.exe']:
+            (self.root / 'src-tauri/binaries' / name).write_bytes(name.encode())
+        darwin = self.lock()['platforms']['darwin-aarch64']
+        media.record(self.root, 'windows-x86_64')
+        lock = self.lock()
+        self.assertEqual(lock['platforms']['darwin-aarch64'], darwin)
+        self.assertEqual(lock['platforms']['windows-x86_64']['binaries'],
+                         {n: hashlib.sha256(n.encode()).hexdigest() for n in ['ffmpeg.exe', 'ffprobe.exe']})
+        notice = (self.root / 'src-tauri/binaries/NOTICE.txt').read_text(encoding='utf-8')
+        self.assertIn(f"ffprobe.exe: {hashlib.sha256(b'ffprobe.exe').hexdigest()}", notice)
+        media.verify(self.root, 'windows-x86_64')
+        (self.root / 'src-tauri/binaries/ffmpeg.exe').write_bytes(b'rebuilt')
+        with self.assertRaisesRegex(SystemExit, 'checksum mismatch'):
+            media.verify(self.root, 'windows-x86_64')
+        with self.assertRaisesRegex(SystemExit, 'not pinned'):
+            media.record(self.root, 'darwin-aarch64')
+
+    def test_macos_tools_must_be_the_ones_the_current_recipe_built(self):
+        shutil.copyfile(ROOT / 'scripts/build-media.sh', self.root / 'scripts/build-media.sh')
+        with self.assertRaisesRegex(SystemExit, 'No media build'):
+            media.verify(self.root, 'darwin-aarch64')
         for name in ['ffmpeg', 'ffprobe']:
             (self.root / 'src-tauri/binaries' / name).write_bytes(name.encode())
-        windows = self.lock()['platforms']['windows-x86_64']
-        media.record(self.root, 'darwin-aarch64')
-        lock = self.lock()
-        self.assertEqual(lock['platforms']['windows-x86_64'], windows)
-        self.assertEqual(lock['platforms']['darwin-aarch64']['binaries'],
-                         {n: hashlib.sha256(n.encode()).hexdigest() for n in ['ffmpeg', 'ffprobe']})
-        notice = (self.root / 'src-tauri/binaries/NOTICE.txt').read_text(encoding='utf-8')
-        self.assertIn(f"ffprobe: {hashlib.sha256(b'ffprobe').hexdigest()}", notice)
-        self.assertIn('ffmpeg.exe: 15ab01b2', notice)
+        with self.assertRaisesRegex(SystemExit, 'No media build'):
+            media.verify(self.root, 'darwin-aarch64')
+        media.write_manifest(self.root, 'darwin-aarch64', 'Xcode 26.1 Build 17B55')
+        manifest = json.loads((self.root / media.MANIFEST).read_text(encoding='utf-8'))
+        self.assertEqual(manifest['binaries'], {n: hashlib.sha256(n.encode()).hexdigest() for n in ['ffmpeg', 'ffprobe']})
+        self.assertEqual(manifest['sourceSha256'], self.lock()['sourceSha256'])
+        self.assertEqual(manifest['toolchain'], 'Xcode 26.1 Build 17B55')
         media.verify(self.root, 'darwin-aarch64')
-        (self.root / 'src-tauri/binaries/ffmpeg').write_bytes(b'rebuilt')
+        (self.root / 'src-tauri/binaries/ffmpeg').write_bytes(b'homebrew ffmpeg')
         with self.assertRaisesRegex(SystemExit, 'checksum mismatch'):
             media.verify(self.root, 'darwin-aarch64')
+        media.write_manifest(self.root, 'darwin-aarch64', 'any')
+        media.verify(self.root, 'darwin-aarch64')
+        with (self.root / 'scripts/build-media.sh').open('a', encoding='utf-8') as recipe:
+            recipe.write('# changed recipe\n')
+        with self.assertRaisesRegex(SystemExit, 'another version of scripts/build-media.sh'):
+            media.verify(self.root, 'darwin-aarch64')
+        media.write_manifest(self.root, 'darwin-aarch64', 'any')
+        manifest = json.loads((self.root / media.MANIFEST).read_text(encoding='utf-8'))
+        manifest['sourceSha256'] = '0' * 64
+        (self.root / media.MANIFEST).write_text(json.dumps(manifest), encoding='utf-8')
+        with self.assertRaisesRegex(SystemExit, 'another FFmpeg source'):
+            media.verify(self.root, 'darwin-aarch64')
+        with self.assertRaisesRegex(SystemExit, 'pinned'):
+            media.write_manifest(self.root, 'windows-x86_64', 'any')
 
     def test_unrecorded_platform_and_stale_notice_fail_verification(self):
         lock = self.lock()
-        lock['platforms']['darwin-aarch64']['binaries'] = {}
+        lock['platforms']['windows-x86_64']['binaries'] = {}
         (self.root / 'scripts/media.lock.json').write_text(json.dumps(lock), encoding='utf-8')
         with self.assertRaisesRegex(SystemExit, 'No recorded media checksums'):
-            media.verify(self.root, 'darwin-aarch64')
+            media.verify(self.root, 'windows-x86_64')
         for name in ['ffmpeg.exe', 'ffprobe.exe']:
             (self.root / 'src-tauri/binaries' / name).write_bytes(name.encode())
         lock['platforms']['windows-x86_64']['binaries'] = media.checksums(self.root, 'windows-x86_64')

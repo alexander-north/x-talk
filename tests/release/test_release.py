@@ -102,7 +102,7 @@ class ReleaseFixture(unittest.TestCase):
         self.tag = f'v{self.version}'
 
     def materials(self):
-        """Committed release inputs, a media lock pinning both platforms' fixture tools, and a git HEAD."""
+        """Committed release inputs, a media lock pinning the Windows fixture tools, a macOS media build manifest, and a git HEAD."""
         self.source = self.root / 'ffmpeg.tar.xz'
         self.source.write_bytes(b'fixture source')
         for name in MATERIALS:
@@ -114,9 +114,10 @@ class ReleaseFixture(unittest.TestCase):
         digest = lambda data: hashlib.sha256(data).hexdigest()
         media = {'version': '8.0.1', 'sourceSha256': release.sha256(self.source), 'platforms': {
             'windows-x86_64': {'binaries': {n: digest(n.encode()) for n in ['ffmpeg.exe', 'ffprobe.exe']}},
-            'darwin-aarch64': {'binaries': {'ffmpeg': digest(b'ffmpeg fixture'),
-                                            'ffprobe': digest(b'ffprobe fixture')}}}}
+            'darwin-aarch64': {'description': 'macOS'}}}
         (self.root / 'scripts/media.lock.json').write_text(json.dumps(media))
+        self.manifest = self.root / 'src-tauri/binaries/media-build.json'
+        self.write_manifest()
         (self.root / 'docs').mkdir(exist_ok=True)
         (self.root / 'docs/RELEASE_NOTES.md').write_text('Friendly release notes.', encoding='utf-8')
         subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
@@ -129,6 +130,16 @@ class ReleaseFixture(unittest.TestCase):
         self.dmg = disk_image(self.root / dmg_name)
         self.archive = app_archive(self.root, self.root / archive_name, self.version)
 
+    def write_manifest(self, **changes):
+        """The manifest scripts/build-media.sh writes for the macOS fixture tools."""
+        digest = lambda data: hashlib.sha256(data).hexdigest()
+        manifest = {'platform': 'darwin-aarch64', 'version': '8.0.1', 'sourceSha256': release.sha256(self.source),
+                    'recipeSha256': release.sha256(self.root / 'scripts/build-media.sh'),
+                    'toolchain': 'Xcode 26.1', 'binaries': {'ffmpeg': digest(b'ffmpeg fixture'),
+                                                            'ffprobe': digest(b'ffprobe fixture')}}
+        manifest.update(changes)
+        self.manifest.write_text(json.dumps(manifest), encoding='utf-8')
+
     def sign(self, path, version=None):
         Path(str(path) + '.sig').write_text(signature(version or self.version), encoding='utf-8')
 
@@ -138,7 +149,7 @@ class ReleaseFixture(unittest.TestCase):
         self.sign(self.archive)
         windows, macos = self.root / 'windows', self.root / 'macos'
         release.assemble(self.root, self.installer, self.source, windows, self.tag, updater=True)
-        release.package_macos(self.root, self.dmg, self.archive, macos, self.tag, updater=True)
+        release.package_macos(self.root, self.dmg, self.archive, self.manifest, macos, self.tag, updater=True)
         return windows, macos
 
 
@@ -303,12 +314,15 @@ class MacPackagingTests(ReleaseFixture):
         self.materials()
 
     def package(self, archive=None, dmg=None, updater=False, output='mac'):
-        return release.package_macos(self.root, dmg or self.dmg, archive or self.archive,
+        return release.package_macos(self.root, dmg or self.dmg, archive or self.archive, self.manifest,
                                      self.root / output, self.tag, updater)
 
     def test_valid_bundle_is_packaged_with_checksums(self):
         self.package()
-        self.assertEqual(release.verified_files(self.root / 'mac', 'macOS'), {self.dmg.name, self.archive.name})
+        media_name = release.macos_media_name(self.version)
+        self.assertEqual(release.verified_files(self.root / 'mac', 'macOS'),
+                         {self.dmg.name, self.archive.name, media_name})
+        self.assertEqual((self.root / 'mac' / media_name).read_bytes(), self.manifest.read_bytes())
         self.sign(self.archive)
         self.package(updater=True, output='signed')
         self.assertIn(self.archive.name + '.sig', release.verified_files(self.root / 'signed', 'macOS'))
@@ -351,6 +365,35 @@ class MacPackagingTests(ReleaseFixture):
             add_dir(archive, './x-talk.app')
         with self.assertRaisesRegex(ValueError, 'outside'):
             self.package(archive=dotted)
+
+    def test_media_must_come_from_this_recipe_and_the_pinned_source(self):
+        cases = {
+            'pinned FFmpeg source': {'sourceSha256': '0' * 64},
+            'different scripts/build-media.sh': {'recipeSha256': '0' * 64},
+            'not built from': {'platform': 'windows-x86_64'},
+            'Malformed': {'binaries': {'ffmpeg': 'x', 'ffprobe': 'y'}},
+            'Media checksum mismatch in app bundle': {'binaries': {'ffmpeg': '0' * 64, 'ffprobe': '1' * 64}},
+        }
+        for index, (message, changes) in enumerate(cases.items()):
+            with self.subTest(message=message):
+                self.write_manifest(**changes)
+                with self.assertRaisesRegex(ValueError, message):
+                    self.package(output=f'out{index}')
+                self.assertFalse((self.root / f'out{index}').exists())
+        self.manifest.unlink()
+        with self.assertRaisesRegex(ValueError, 'media build manifest'):
+            self.package(output='missing')
+        # If the lock ever pins the macOS tools, the build must also match the pin.
+        self.write_manifest()
+        lock = json.loads((self.root / 'scripts/media.lock.json').read_text())
+        lock['platforms']['darwin-aarch64']['binaries'] = {'ffmpeg': '0' * 64, 'ffprobe': '1' * 64}
+        (self.root / 'scripts/media.lock.json').write_text(json.dumps(lock))
+        with self.assertRaisesRegex(ValueError, 'pinned in media.lock.json'):
+            self.package(output='pinned')
+
+    def test_notice_names_the_published_media_manifest(self):
+        notice = (ROOT / 'src-tauri/binaries/NOTICE.txt').read_text(encoding='utf-8')
+        self.assertIn(release.macos_media_name('<version>'), notice)
 
     def test_signed_package_requires_signature(self):
         with self.assertRaisesRegex(ValueError, 'signature'):
@@ -403,7 +446,7 @@ class PublishSetTests(ReleaseFixture):
         windows, macos = self.root / 'windows', self.root / 'macos'
         release.assemble(self.root, self.installer, self.source, windows, self.tag)
         self.sign(self.archive)
-        release.package_macos(self.root, self.dmg, self.archive, macos, self.tag, updater=True)
+        release.package_macos(self.root, self.dmg, self.archive, self.manifest, macos, self.tag, updater=True)
         with self.assertRaisesRegex(ValueError, r'Incomplete Windows.*setup\.exe\.sig'):
             release.publish_set(self.root, self.tag, windows, macos, self.root / 'release')
 
@@ -423,6 +466,16 @@ class PublishSetTests(ReleaseFixture):
         with self.assertRaisesRegex(ValueError, r"unexpected \['notes.txt'\]"):
             release.publish_set(self.root, self.tag, windows, macos, output)
         (macos / 'notes.txt').unlink()
+        # A media manifest that does not describe the bundled tools cannot be published.
+        media = macos / release.macos_media_name(self.version)
+        original_media = media.read_bytes()
+        manifest = json.loads(original_media)
+        manifest['binaries']['ffmpeg'] = '0' * 64
+        media.write_text(json.dumps(manifest))
+        release.write_checksums(macos)
+        with self.assertRaisesRegex(ValueError, 'Media checksum mismatch in app bundle'):
+            release.publish_set(self.root, self.tag, windows, macos, output)
+        media.write_bytes(original_media)
         (macos / (self.archive.name + '.sig')).write_text(signature('0.0.1'))
         release.write_checksums(macos)
         with self.assertRaisesRegex(ValueError, 'not bound'):

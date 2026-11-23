@@ -365,8 +365,11 @@ pub fn resolve_tool(tool: &str, bundled: &Path, search: &[PathBuf], fallback: bo
 }
 /// PATH entries followed by [`DEVELOPMENT_TOOL_DIRS`], for [`resolve_tool`].
 pub fn development_search_path() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect())
+    search_path(std::env::var_os("PATH").as_deref())
+}
+fn search_path(path: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = path
+        .map(|path| std::env::split_paths(path).collect())
         .unwrap_or_default();
     dirs.extend(DEVELOPMENT_TOOL_DIRS.iter().map(PathBuf::from));
     dirs
@@ -566,10 +569,16 @@ mod tests {
         );
     }
     #[test]
-    fn development_search_path_ends_with_homebrew_and_system_dirs() {
-        let dirs = development_search_path();
-        let expected: Vec<PathBuf> = DEVELOPMENT_TOOL_DIRS.iter().map(PathBuf::from).collect();
-        assert!(dirs.ends_with(&expected));
+    fn development_search_path_puts_path_entries_before_homebrew_and_system_dirs() {
+        let fixed: Vec<PathBuf> = DEVELOPMENT_TOOL_DIRS.iter().map(PathBuf::from).collect();
+        assert_eq!(search_path(None), fixed);
+        let first = std::env::temp_dir().join("first");
+        let second = std::env::temp_dir().join("second");
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        let mut expected = vec![first, second];
+        expected.extend(fixed);
+        assert_eq!(search_path(Some(&path)), expected);
+        assert!(development_search_path().ends_with(&expected[2..]));
     }
     #[cfg(unix)]
     #[tokio::test]

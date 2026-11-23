@@ -11,9 +11,7 @@
       }
     },
     "darwin-aarch64": {
-      "description": "macOS Apple Silicon (native Xcode 16.4 clang build, macOS 14.2 or later, links only macOS system libraries)",
-      "xcode": "16.4",
-      "binaries": {}
+      "description": "macOS Apple Silicon (native clang build, macOS 14.2 or later, links only macOS system libraries)"
     }
   }
 }

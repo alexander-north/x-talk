@@ -2,8 +2,11 @@
 # Build the bundled FFmpeg tools from the pinned official source archive (see media.lock.json).
 #   Linux/WSL:            MinGW-w64 cross-build of ffmpeg.exe/ffprobe.exe (windows-x86_64).
 #   macOS, Apple Silicon: native build of ffmpeg/ffprobe (darwin-aarch64), macOS 14.2 or later.
-# Both use the same audio-only LGPL component set. The result is checked against the lock;
-# pass --record only when deliberately pinning a new build (it rewrites the lock and NOTICE.txt).
+# Both use the same audio-only LGPL component set from the checksum-verified source archive.
+# Windows tools are reproducible and pinned in the lock (pass --record only when deliberately
+# pinning a new build; it rewrites the lock and NOTICE.txt). macOS tools are not pinned: any
+# recent Xcode or Command Line Tools works, and the build writes src-tauri/binaries/media-build.json
+# (tool, source and recipe checksums plus the toolchain), which packaging and releases verify.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD
@@ -46,17 +49,13 @@ if [[ $platform == windows-x86_64 ]]; then
   x86_64-w64-mingw32-strip ffmpeg.exe ffprobe.exe
   cp ffmpeg.exe ffprobe.exe "$root/src-tauri/binaries/"
 else
-  # Native arm64 only: Rosetta reports x86_64 and a cross-build would not match the pinned checksums.
+  # Native arm64 only (a shell under Rosetta reports x86_64).
   if [[ $(uname -m) != arm64 ]]; then echo "macOS media must be built natively on Apple Silicon (uname -m: $(uname -m))" >&2; exit 1; fi
-  # The checksums are tied to one Apple toolchain; select it with DEVELOPER_DIR or xcode-select.
-  xcode=$(python3 -c 'import json;print(json.load(open("scripts/media.lock.json"))["platforms"]["darwin-aarch64"]["xcode"])')
-  actual=$(xcodebuild -version 2>/dev/null | head -n 1 || true)
-  if [[ $actual != "Xcode $xcode" && ${XTALK_MEDIA_ANY_XCODE:-} != 1 ]]; then
-    echo "macOS media is pinned to Xcode $xcode, found '${actual:-no Xcode}'. Select it (DEVELOPER_DIR=/Applications/Xcode_$xcode.app/Contents/Developer) or set XTALK_MEDIA_ANY_XCODE=1 for an unpinned experiment." >&2
-    exit 1
-  fi
+  if [[ $mode == --record ]]; then echo "macOS media is verified per build, not pinned; run without --record" >&2; exit 2; fi
+  # Recorded in the build manifest (and published with each release); not used to pin checksums.
+  toolchain="$(xcodebuild -version 2>/dev/null | tr '\n' ' ' || true)$(clang --version | head -n 1); macOS $(sw_vers -productVersion)"
   build="$work/darwin-aarch64"
-  # Always a clean tree, so no object from an earlier configuration can leak into a pinned build.
+  # Always a clean tree, so no object from an earlier configuration can leak into the shipped tools.
   rm -rf "$build"
   mkdir -p "$build/tools"
   # No external libraries: a pkg-config that finds nothing, so Homebrew .pc files can never be used.
@@ -96,4 +95,8 @@ fi
 cp COPYING.LGPLv2.1 "$root/src-tauri/binaries/FFmpeg-LICENSE.txt"
 cp ffbuild/config.log "$root/.tmp/ffmpeg-config.log"
 cd "$root"
+if [[ $platform == darwin-aarch64 ]]; then
+  python3 scripts/verify-media.py --platform "$platform" --write-manifest "$toolchain"
+  mode=--verify
+fi
 python3 scripts/verify-media.py --platform "$platform" "$mode"

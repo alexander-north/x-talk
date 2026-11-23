@@ -27,7 +27,7 @@ pub trait MeetingProvider: Send + Sync {
 #[async_trait::async_trait]
 impl MeetingProvider for Providers {
     fn check_key(&self, provider: &str) -> Result<()> {
-        self.keys.get(provider).map(|_| ())
+        self.keys.exists(provider)
     }
     async fn upload(&self, path: &Path) -> Result<String> {
         self.meeting_upload(path).await

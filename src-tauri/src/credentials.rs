@@ -8,6 +8,12 @@ pub const PROVIDERS: [&str; 5] = [
 ];
 pub trait CredentialStore: Send + Sync {
     fn get(&self, provider: &str) -> Result<String>;
+    /// Whether a key is stored, with the same errors as [`CredentialStore::get`]. Use this
+    /// for status and pre-flight checks; read the key only when a provider is called. The
+    /// macOS Keychain answers it from item attributes, so it never shows an access prompt.
+    fn exists(&self, provider: &str) -> Result<()> {
+        self.get(provider).map(|_| ())
+    }
     fn set(&self, provider: &str, key: &str) -> Result<()>;
     fn delete(&self, provider: &str) -> Result<()>;
 }
@@ -129,36 +135,37 @@ fn valid_key(key: &str) -> Result<()> {
 mod native {
     //! Generic passwords in the login keychain: service = bundle identifier, account = provider.
     use super::*;
+    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
     use security_framework::passwords::{
         delete_generic_password, generic_password, set_generic_password, PasswordOptions,
     };
     /// `errSecItemNotFound` from Security.framework's SecBase.h.
     const ITEM_NOT_FOUND: i32 = -25300;
+    fn read_failed(status: i32) -> AppError {
+        tracing::warn!(status, "keychain_read_failed");
+        AppError::new(
+            "credentials",
+            "read",
+            "macOS Keychain could not read the key. Unlock the login keychain or allow x-talk access, then try again.",
+        )
+    }
     /// One keychain service. The app uses [`KEYCHAIN_SERVICE`]; tests use their own.
     pub(super) struct Keychain(pub(super) &'static str);
     impl CredentialStore for Keychain {
         fn get(&self, provider: &str) -> Result<String> {
             check(provider)?;
-            let bytes = match generic_password(PasswordOptions::new_generic_password(
-                self.0, provider,
-            )) {
-                Ok(bytes) => bytes,
-                Err(e) if e.code() == ITEM_NOT_FOUND => {
-                    return Err(AppError::new(
-                        "credentials",
-                        "missing_key",
-                        missing_key_message(provider),
-                    ))
-                }
-                Err(e) => {
-                    tracing::warn!(status = e.code(), "keychain_read_failed");
-                    return Err(AppError::new(
+            let bytes =
+                match generic_password(PasswordOptions::new_generic_password(self.0, provider)) {
+                    Ok(bytes) => bytes,
+                    Err(e) if e.code() == ITEM_NOT_FOUND => {
+                        return Err(AppError::new(
                             "credentials",
-                            "read",
-                            "macOS Keychain could not read the key. Unlock the login keychain or allow x-talk access, then try again.",
-                        ));
-                }
-            };
+                            "missing_key",
+                            missing_key_message(provider),
+                        ))
+                    }
+                    Err(e) => return Err(read_failed(e.code())),
+                };
             String::from_utf8(bytes).map_err(|_| {
                 AppError::new(
                     "credentials",
@@ -166,6 +173,27 @@ mod native {
                     "Stored API key is invalid. Replace it.",
                 )
             })
+        }
+        /// Attributes only (no `kSecReturnData`): legacy keychain ACLs guard the secret, not
+        /// the attributes, so this does not prompt even when the ad-hoc signature changed.
+        fn exists(&self, provider: &str) -> Result<()> {
+            check(provider)?;
+            let mut query = ItemSearchOptions::new();
+            query
+                .class(ItemClass::generic_password())
+                .service(self.0)
+                .account(provider)
+                .load_attributes(true)
+                .limit(Limit::Max(1));
+            match query.search() {
+                Ok(_) => Ok(()),
+                Err(e) if e.code() == ITEM_NOT_FOUND => Err(AppError::new(
+                    "credentials",
+                    "missing_key",
+                    missing_key_message(provider),
+                )),
+                Err(e) => Err(read_failed(e.code())),
+            }
         }
         fn set(&self, provider: &str, key: &str) -> Result<()> {
             check(provider)?;
@@ -197,6 +225,9 @@ mod native {
     impl CredentialStore for NativeCredentials {
         fn get(&self, provider: &str) -> Result<String> {
             Keychain(KEYCHAIN_SERVICE).get(provider)
+        }
+        fn exists(&self, provider: &str) -> Result<()> {
+            Keychain(KEYCHAIN_SERVICE).exists(provider)
         }
         fn set(&self, provider: &str, key: &str) -> Result<()> {
             Keychain(KEYCHAIN_SERVICE).set(provider, key)
@@ -240,13 +271,16 @@ mod tests {
         let store = native::Keychain("com.xander.xtalk.tests");
         let _ = store.delete("openai");
         assert_eq!(store.get("openai").unwrap_err().category, "missing_key");
+        assert_eq!(store.exists("openai").unwrap_err().category, "missing_key");
         store.set("openai", " sk-first ").unwrap();
+        store.exists("openai").unwrap();
         assert_eq!(store.get("openai").unwrap(), "sk-first");
         store.set("openai", "sk-second").unwrap();
         assert_eq!(store.get("openai").unwrap(), "sk-second");
         store.delete("openai").unwrap();
         store.delete("openai").unwrap();
         assert_eq!(store.get("openai").unwrap_err().category, "missing_key");
+        assert!(store.exists("openai").is_err());
         assert!(store.set("unknown", "sk").is_err());
         assert!(store.set("openai", "a\nb").is_err());
     }

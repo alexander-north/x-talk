@@ -23,13 +23,13 @@ if (process.platform === 'win32') {
  }
  const tauri = join(root, 'node_modules/.bin/tauri');
  if (!existsSync(tauri)) throw new Error('Run npm ci first.');
- // The Tauri build needs the media resources to exist. Pinned tools are preferred; development
- // tools (for example Homebrew's, linked into src-tauri/binaries) are allowed with a warning.
+ // The Tauri build needs the media resource files to exist. Tools from scripts/build-media.sh are
+ // preferred; empty placeholders (debug builds then use Homebrew's ffmpeg) are allowed with a warning.
  if (!['ffmpeg', 'ffprobe'].every((tool) => existsSync(join(root, 'src-tauri/binaries', tool)))) {
-  throw new Error('src-tauri/binaries/ffmpeg and ffprobe are missing. Build them with scripts/build-media.sh or link development tools (see README).');
+  throw new Error('src-tauri/binaries/ffmpeg and ffprobe are missing. Build them with scripts/build-media.sh or create empty placeholders (see README).');
  }
  if (spawnSync(process.execPath, [join(root, 'scripts/verify-media.mjs')], { cwd: root, stdio: 'inherit' }).status !== 0) {
-  console.warn('Using unpinned development media tools; release builds require the pinned ones.');
+  console.warn('Using development media tools; desktop:build requires the ones scripts/build-media.sh builds.');
  }
  const data = join(root, '.tmp/ui-dev/data');
  mkdirSync(data, { recursive: true });
