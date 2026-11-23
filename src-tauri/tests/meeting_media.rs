@@ -206,8 +206,10 @@ async fn compatible_import_copies_packets_and_pcm_without_encoding() {
     assert_eq!(result.plan, ImportPlan::Extract("m4a", "ipod"));
     assert_eq!(result.info.audio_streams, 1);
     assert!(!result.info.video);
-    async fn packets(path: &Path) -> Vec<u8> {
-        tools()
+    // Compare payload hashes only: newer FFmpeg releases also print per-packet
+    // side data (for example MP4 "Skip Samples"), which differs by container.
+    async fn packets(path: &Path) -> Vec<String> {
+        let output = tools()
             .run(
                 &tools().ffprobe,
                 &[
@@ -227,7 +229,16 @@ async fn compatible_import_copies_packets_and_pcm_without_encoding() {
                 std::time::Duration::from_secs(30),
             )
             .await
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        let hashes: Vec<String> = report["packets"]
+            .as_array()
             .unwrap()
+            .iter()
+            .map(|packet| packet["data_hash"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(!hashes.is_empty());
+        hashes
     }
     assert_eq!(
         packets(&input).await,
