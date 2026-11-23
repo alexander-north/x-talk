@@ -2,6 +2,8 @@
 #[cfg(feature = "desktop")]
 pub mod capture;
 #[cfg(feature = "desktop")]
+pub mod capture_core;
+#[cfg(feature = "desktop")]
 pub mod commands;
 pub mod domain;
 pub mod export;

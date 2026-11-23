@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>x-talk uses the microphone when you dictate or record a meeting, and to show input levels on the meeting recorder. Recordings are saved on this Mac and sent to the speech provider you choose for transcription.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>x-talk captures audio from other apps when you record a meeting with System audio turned on, and to show its level on the meeting recorder. Recordings are saved on this Mac and sent to the speech provider you choose for transcription.</string>
+</dict>
+</plist>

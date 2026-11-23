@@ -6,6 +6,11 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
+# Tauri overlays the platform file on tauri.conf.json; either may carry the application version.
+PLATFORM_CONFIGS = ['src-tauri/tauri.windows.conf.json', 'src-tauri/tauri.macos.conf.json']
+TAURI_CONFIGS = ['src-tauri/tauri.conf.json', *PLATFORM_CONFIGS]
+VERSION_FILES = ['package.json', 'package-lock.json', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock',
+                 *TAURI_CONFIGS]
 
 
 def stamp(root, number):
@@ -14,9 +19,14 @@ def stamp(root, number):
     package = json.loads((root / 'package.json').read_text(encoding='utf-8'))
     major, minor, _ = package['version'].split('.')
     version = f'{major}.{minor}.{number}'
-    for name in ['package.json', 'package-lock.json', 'src-tauri/tauri.conf.json']:
+    for name in ['package.json', 'package-lock.json', *TAURI_CONFIGS]:
         path = root / name
+        if name in PLATFORM_CONFIGS and not path.is_file():
+            continue
         data = json.loads(path.read_text(encoding='utf-8'))
+        if name in PLATFORM_CONFIGS and 'version' not in data:
+            # Platform files inherit the base version; leave them byte-for-byte unchanged.
+            continue
         data['version'] = version
         if name == 'package-lock.json':
             data['packages']['']['version'] = version
@@ -37,8 +47,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     version = stamp(ROOT, args.number)
-    subprocess.run(['git', 'add', 'package.json', 'package-lock.json', 'src-tauri/Cargo.toml',
-                    'src-tauri/Cargo.lock', 'src-tauri/tauri.conf.json'], cwd=ROOT, check=True)
+    subprocess.run(['git', 'add', *[name for name in VERSION_FILES if (ROOT / name).is_file()]],
+                   cwd=ROOT, check=True)
     subprocess.run(['git', '-c', 'user.name=github-actions[bot]', '-c',
                     'user.email=41898282+github-actions[bot]@users.noreply.github.com',
                     'commit', '-m', f'Release x-talk {version}'], cwd=ROOT, check=True)

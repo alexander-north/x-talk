@@ -16,10 +16,19 @@ fn tools() -> Ffmpeg {
             return PathBuf::from(path);
         }
         if cfg!(windows) {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("binaries/{name}.exe"))
-        } else {
-            PathBuf::from(format!("/usr/bin/{name}"))
+            return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("binaries/{name}.exe"));
         }
+        // Bundled macOS builds when present (not the small placeholder files),
+        // otherwise a system/Homebrew FFmpeg.
+        let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("binaries/{name}"));
+        if cfg!(target_os = "macos") && bundled.metadata().is_ok_and(|m| m.len() > 1_000_000) {
+            return bundled;
+        }
+        ["/usr/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+            .iter()
+            .map(|dir| PathBuf::from(dir).join(name))
+            .find(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from(format!("/usr/bin/{name}")))
     };
     Ffmpeg {
         ffmpeg: binary("ffmpeg"),

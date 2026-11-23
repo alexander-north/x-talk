@@ -4,7 +4,10 @@ use crate::{
     domain::{AppError, Result},
 };
 use serde::Serialize;
-use std::sync::{atomic::Ordering, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -171,12 +174,20 @@ pub async fn install_update(app: tauri::AppHandle, confirmed: bool) -> Result<()
         tauri::async_runtime::spawn_blocking(move || {
             use tauri_plugin_window_state::AppHandleExt;
             let _ = handle.save_window_state(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE);
-            // NSIS restarts the app after handoff. Avoid destructive cleanup before
+            // Windows: NSIS restarts the app after handoff. Avoid destructive cleanup before
             // ShellExecute succeeds: a launch failure must leave this process usable.
+            // macOS: the updater swaps the .app bundle in place and returns; a failure
+            // restores the previous bundle, so this process also stays usable.
             update.install(bytes).map_err(|_| failure("Could not start the update installer. Please try again or download it from GitHub Releases."))
         }).await.map_err(|_| failure("The update installer could not be started."))?
     }.await;
-    // Windows exits on successful handoff. Errors must leave the current app usable.
+    // Windows exits on successful handoff, so only errors reach this point there.
+    #[cfg(not(windows))]
+    if result.is_ok() {
+        restart_into_update(&app).await;
+        return Ok(());
+    }
+    // Errors must leave the current app usable.
     state.shutting_down.store(false, Ordering::Release);
     if let Err(ref error) = result {
         tracing::warn!("update_install_failed");
@@ -186,6 +197,65 @@ pub async fn install_update(app: tauri::AppHandle, confirmed: bool) -> Result<()
         });
     }
     result
+}
+
+static RELAUNCH: AtomicBool = AtomicBool::new(false);
+/// The new bundle is in place (macOS): shut down like Quit and relaunch from `RunEvent::Exit`,
+/// after the single-instance socket is gone, so the new process does not hand off to this one.
+#[cfg(not(windows))]
+async fn restart_into_update(app: &tauri::AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    tracing::info!("update_installed_restarting");
+    let state = app.state::<AppState>();
+    // Release the hotkeys now, so the new instance can register them while this one exits.
+    let _ = app.global_shortcut().unregister_all();
+    state.cues.shutdown();
+    let diagnostics = state.diagnostics.clone();
+    let flush = tauri::async_runtime::spawn_blocking(move || diagnostics.shutdown());
+    let _ = tokio::time::timeout(Duration::from_secs(2), flush).await;
+    RELAUNCH.store(true, Ordering::Release);
+    state.exit_ready.store(true, Ordering::Release);
+    app.exit(0);
+}
+/// Start the updated app once this process is exiting. Call from `RunEvent::Exit`.
+pub fn relaunch_if_updated() {
+    if !RELAUNCH.swap(false, Ordering::AcqRel) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    // Through LaunchServices without the original arguments, so an app started at login with
+    // --background reopens visibly, as after the Windows installer.
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = app_bundle(&exe) {
+        let opened = std::process::Command::new("/usr/bin/open")
+            .arg("-n")
+            .arg(bundle)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if opened.is_ok_and(|s| s.success()) {
+            return;
+        }
+    }
+    let _ = std::process::Command::new(exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+/// `/Applications/x-talk.app` for `/Applications/x-talk.app/Contents/MacOS/x-talk`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn app_bundle(exe: &std::path::Path) -> Option<&std::path::Path> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    (macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && bundle.extension()? == "app")
+        .then_some(bundle)
 }
 
 pub fn start(app: &tauri::AppHandle) {
@@ -206,4 +276,20 @@ pub fn start(app: &tauri::AppHandle) {
             tokio::time::sleep(Duration::from_secs(12 * 60 * 60)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    #[test]
+    fn app_bundle_is_found_only_for_a_bundled_executable() {
+        assert_eq!(
+            app_bundle(Path::new("/Applications/x-talk.app/Contents/MacOS/x-talk")),
+            Some(Path::new("/Applications/x-talk.app"))
+        );
+        assert_eq!(app_bundle(Path::new("/repo/target/debug/x-talk")), None);
+        assert_eq!(app_bundle(Path::new("/x/Contents/MacOS/x-talk")), None);
+        assert_eq!(app_bundle(Path::new("x-talk")), None);
+    }
 }

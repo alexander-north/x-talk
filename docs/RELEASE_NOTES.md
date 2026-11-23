@@ -1,3 +1,15 @@
+# x-talk for Mac (new, Apple Silicon)
+
+x-talk now runs on Apple Silicon Macs with macOS 14.2 or later: dictation, imports, playback, sounds, shortcuts, the menu bar icon, start at login, in-app updates, and meeting recording with your microphone and system audio. Windows behavior is unchanged.
+
+- **Download `x-talk_<version>_aarch64.dmg`** and drag x-talk into Applications. Intel Macs aren't supported.
+- **First launch needs one approval.** The Mac app isn't signed with an Apple Developer ID or notarized. Open it once, click Done, then go to System Settings → Privacy & Security and click **Open Anyway**. Don't turn off Gatekeeper.
+- **macOS asks for Microphone access** when you first record (allow it, then start again), and for **system audio recording** when a meeting first records system audio.
+- **Shortcuts are Control+Option+Space and Control+Option+Escape** on a Mac, shown with Mac symbols. Manual entry accepts Cmd, Option and Control.
+- Keys are stored in your login keychain; recordings live in `~/Library/Application Support/com.xander.xtalk`.
+
+**Mac support is new and hasn't had hands-on testing on real hardware yet.** Recording, system audio capture, permission prompts, shortcuts, the menu bar icon, start at login, Keychain access and updates were built and packaged by CI but not verified on a Mac. Because the app is only ad-hoc signed, macOS may ask again for microphone, system audio or Keychain access after an update. Please report problems with your macOS version and Mac model.
+
 # x-talk: audible failures, faster libraries, safer long recordings
 
 This release fixes long real-time recordings, makes failures audible when x-talk is in the tray, and tightens privacy and the release pipeline.
@@ -50,10 +62,10 @@ Review briefs and timestamped transcripts, name or merge speakers, correct indiv
 
 Meeting recording supports Start and Stop, source muting, compact controls, and tray access. Use headphones to avoid duplicate speaker pickup; echo cancellation is not included. Existing dictation remains available.
 
-Download the `x-talk_<version>_x64-setup.exe` asset for Windows x64. Add your own provider key under Settings → API Keys; provider usage is billed separately. Installers and signed updates are available from the public GitHub releases.
+Download the `x-talk_<version>_x64-setup.exe` asset for Windows x64, or `x-talk_<version>_aarch64.dmg` for Apple Silicon Macs (macOS 14.2 or later). Add your own provider key under Settings → API Keys; provider usage is billed separately. Installers and signed updates are available from the public GitHub releases.
 
 **The Windows publisher is still unsigned.** Updater signatures protect updates but do not remove unknown-publisher or SmartScreen warnings. WebView2 is required; the installer can download it if missing. Do not disable Windows security protections.
 
-History and diagnostics stay local. Audio goes to your chosen speech provider; transformation sends text to its provider. macOS is not supported. Microphone, shortcut, and speaker behavior varies by device. Use headphones or disable start cues to avoid speaker pickup. OpenAI, ElevenLabs, and the AssemblyAI/Luna meeting workflow have live checks; other providers still need live acceptance.
+History and diagnostics stay local. Audio goes to your chosen speech provider; transformation sends text to its provider. The Mac app is not Apple-signed or notarized; approve its first launch in System Settings → Privacy & Security instead of disabling Gatekeeper. Microphone, shortcut, and speaker behavior varies by device. Use headphones or disable start cues to avoid speaker pickup. OpenAI, ElevenLabs, and the AssemblyAI/Luna meeting workflow have live checks; other providers still need live acceptance.
 
 Original x-talk material is Apache-2.0. The release includes dependency notices/sources and the exact source/build recipe for its separate LGPL FFmpeg executables. Verify downloads against SHA256SUMS.txt.

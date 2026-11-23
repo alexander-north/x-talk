@@ -32,7 +32,7 @@
 .home-outputs .output-card{min-height:181px;border-radius:16px;border-color:var(--line);box-shadow:0 6px 24px var(--shadow);background:linear-gradient(125deg,#ffffff14,transparent),var(--surface)}
 .output-card .text-heading{padding:15px 20px 3px}
 .output-card .text-heading h2{font-weight:500}
-.home-output{display:grid;align-content:start;height:clamp(150px,calc(22.5dvh + 12px),238px);min-height:0;padding:12px 21px 22px;font-family:"Segoe UI Variable Text","Segoe UI",sans-serif;font-size:16px;line-height:1.7;max-height:none}
+.home-output{display:grid;align-content:start;height:clamp(150px,calc(22.5dvh + 12px),238px);min-height:0;padding:12px 21px 22px;font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;font-size:16px;line-height:1.7;max-height:none}
 .transformed-card .home-output{font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif;font-size:16.8px;line-height:1.55;letter-spacing:-.2px}
 .home-output.placeholder{font-size:15px;color:var(--muted)}
 .recorder-footer{padding-top:10px}
@@ -57,7 +57,7 @@
 .orb-glyphs{display:grid;place-items:center;position:relative;pointer-events:none}
 .glyph-layer{grid-area:1/1;opacity:0;transform:scale(.84);transition:opacity .45s ease,transform .55s cubic-bezier(.22,.68,.25,1)}
 .glyph-layer.visible{opacity:1;transform:scale(1)}
-.record-timer{font-family:"Segoe UI Variable Text","Segoe UI",sans-serif;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.6px;color:#7eb9dd;filter:none}
+.record-timer{font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.6px;color:#7eb9dd;filter:none}
 .compact .record-timer{font-size:15px}
 .star-art{display:grid}
 .home-output>span{grid-area:1/1;min-width:0}

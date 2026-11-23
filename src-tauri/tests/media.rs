@@ -3,27 +3,24 @@ use x_talk::{
     domain::*,
     media::{Ffmpeg, MediaProcessor},
 };
+/// XTALK_FFMPEG/XTALK_FFPROBE, else the bundled tools in src-tauri/binaries; outside Windows a
+/// missing bundled tool falls back to PATH, Homebrew and /usr/bin like debug app builds.
+fn tool(variable: &str, name: &str) -> std::path::PathBuf {
+    std::env::var_os(variable)
+        .map(Into::into)
+        .unwrap_or_else(|| {
+            x_talk::media::resolve_tool(
+                name,
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"),
+                &x_talk::media::development_search_path(),
+                !cfg!(windows),
+            )
+        })
+}
 fn tools() -> Ffmpeg {
     Ffmpeg {
-        ffmpeg: std::env::var_os("XTALK_FFMPEG")
-            .map(Into::into)
-            .unwrap_or_else(|| {
-                if cfg!(windows) {
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/ffmpeg.exe")
-                } else {
-                    "/usr/bin/ffmpeg".into()
-                }
-            }),
-        ffprobe: std::env::var_os("XTALK_FFPROBE")
-            .map(Into::into)
-            .unwrap_or_else(|| {
-                if cfg!(windows) {
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("binaries/ffprobe.exe")
-                } else {
-                    "/usr/bin/ffprobe".into()
-                }
-            }),
+        ffmpeg: tool("XTALK_FFMPEG", "ffmpeg"),
+        ffprobe: tool("XTALK_FFPROBE", "ffprobe"),
     }
 }
 fn fixture(path: &Path, parts: &[(f64, f32)]) {

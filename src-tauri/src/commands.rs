@@ -610,7 +610,11 @@ pub async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<
                     AppError::new(
                         "settings",
                         "autostart",
-                        "Windows login startup could not be changed.",
+                        if cfg!(target_os = "macos") {
+                            "macOS login startup could not be changed."
+                        } else {
+                            "Windows login startup could not be changed."
+                        },
                     )
                 })?;
             }
@@ -934,10 +938,30 @@ pub async fn open_repository() -> Result<()> {
             .args(["url.dll,FileProtocolHandler", URL])
             .spawn()?;
         #[cfg(not(windows))]
-        std::process::Command::new("xdg-open").arg(URL).spawn()?;
+        open_with_system(std::ffi::OsStr::new(URL))?;
         Ok(())
     })
     .await
+}
+/// Open a URL or folder with the default handler (`open` on macOS, `xdg-open` on Linux).
+/// Waits for the launcher, which returns once the handler is started, so no zombie remains.
+#[cfg(not(windows))]
+fn open_with_system(target: &std::ffi::OsStr) -> Result<()> {
+    let launcher = if cfg!(target_os = "macos") {
+        "/usr/bin/open"
+    } else {
+        "xdg-open"
+    };
+    let status = std::process::Command::new(launcher)
+        .arg(target)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if !status.success() {
+        return Err(AppError::input("The system could not open it."));
+    }
+    Ok(())
 }
 #[tauri::command]
 pub fn preview_sound(app: tauri::AppHandle, event: String) -> Result<()> {
@@ -971,9 +995,7 @@ pub async fn open_logs_folder(app: tauri::AppHandle) -> Result<()> {
                 .spawn()?;
         }
         #[cfg(not(windows))]
-        {
-            std::process::Command::new("xdg-open").arg(path).spawn()?;
-        }
+        open_with_system(path.as_os_str())?;
         tracing::info!("logs_folder_opened");
         Ok(())
     })

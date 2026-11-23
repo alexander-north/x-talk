@@ -504,7 +504,12 @@ pub async fn meeting_devices() -> Result<Devices> {
     blocking(|| {
         use cpal::traits::{DeviceTrait, HostTrait};
         let host = cpal::default_host();
-        let microphones = crate::capture::Capture::devices()?;
+        // xTalk's own private system-audio devices are never selectable sources.
+        let internal = super::capture_core::internal_device;
+        let microphones = crate::capture::Capture::devices()?
+            .into_iter()
+            .filter(|d| !internal(&d.id))
+            .collect();
         let outputs = host
             .output_devices()
             .map_err(|_| AppError::input("Could not list output devices."))?
@@ -514,6 +519,7 @@ pub async fn meeting_devices() -> Result<Devices> {
                     name: crate::capture::device_label(&d.description().ok()?),
                 })
             })
+            .filter(|d| !internal(&d.id))
             .collect();
         Ok(Devices {
             microphones,

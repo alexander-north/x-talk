@@ -12,9 +12,10 @@ body:
     validations:
       required: true
   - type: input
-    id: windows
+    id: system
     attributes:
-      label: Windows version and audio device
+      label: Operating system, version, and audio device
+      description: For example "Windows 10 Pro 22H2, Blue Yeti" or "macOS 15.1 on a MacBook Air M2, built-in microphone".
     validations:
       required: true
   - type: textarea

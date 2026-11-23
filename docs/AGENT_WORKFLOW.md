@@ -9,7 +9,7 @@ This is a maintainer guide for an agent starting without the original conversati
 3. Check [package.json](../package.json), [Cargo.toml](../src-tauri/Cargo.toml), [rust-toolchain.toml](../rust-toolchain.toml), and the [Windows workflow](../.github/workflows/windows.yml) for actual commands, features, and pinned versions. Do not upgrade tooling just to get started.
 4. Use [README setup](../README.md#build-and-test) for prerequisites and initial builds. Use [RELEASING.md](RELEASING.md) for release work. Keep product decisions in SPEC, operational lessons here, and temporary evidence in `.tmp/`.
 
-Windows x64 is the supported desktop target. WSL/Linux is useful for core Rust tests and building the bundled Windows media tools. A Linux test pass or a browser-only UI preview does not verify the Windows application.
+Windows x64 and macOS 14.2+ on Apple Silicon are the supported desktop targets; macOS support is new (see [SPEC](../SPEC.md#macos-support)). WSL/Linux is useful for core Rust tests and building the bundled Windows media tools. A Linux test pass or a browser-only UI preview does not verify either desktop application, and a Windows pass does not verify the Mac build.
 
 ## Code map
 
@@ -20,13 +20,13 @@ Windows x64 is the supported desktop target. WSL/Linux is useful for core Rust t
 | Native startup and commands | `src-tauri/src/app.rs`, `commands.rs` | Desktop lifecycle, shortcuts, tray, command registration, state/progress responses |
 | Domain and persistence | `domain.rs`, `storage.rs`, `src-tauri/migrations/` | Settings, jobs, immutable request snapshots, SQLite, history and retention |
 | Capture and media | `capture.rs`, `spectrum.rs`, `media.rs` | Microphone/writer lifecycle, admission/recovery journals, validation and FFmpeg subprocesses |
-| Meetings | `src-tauri/src/meetings/`, `src/meetings/`, `src/components/meetings/` | Separate SQLite library, durable jobs, WASAPI microphone/loopback capture, JSON projection and review UI |
+| Meetings | `src-tauri/src/meetings/`, `src/meetings/`, `src/components/meetings/` | Separate SQLite library, durable jobs, WASAPI microphone/loopback capture (Core Audio microphone and process-tap capture on macOS), JSON projection and review UI |
 | Processing | `jobs.rs`, `providers.rs` | Queue/retry/resume behavior, stage persistence, provider requests |
-| Credentials and diagnostics | `credentials.rs`, `diagnostics.rs` | Windows credential storage and bounded local logs |
+| Credentials and diagnostics | `credentials.rs`, `diagnostics.rs` | Windows Credential Manager or macOS Keychain storage and bounded local logs |
 | Audio feedback | `cues.rs`, `sounds.rs`, `scripts/generate-sounds.py` | Cue scheduling, playback, reproducible original sound assets |
 | Acceptance backend | `test_support.rs`, `tests/e2e/` | Deterministic debug-only providers and native UI tests |
 | Updates | `src-tauri/src/updates.rs`, `src/components/Updates.svelte`, `src/updates.ts` | Signed update checks, installation guards, confirmation and status |
-| Packaging | `scripts/prepare-release.py`, `scripts/release.py`, `generate-notices.py`, `build-media.sh` | Version/material validation, dependency sources/notices, pinned media executables |
+| Packaging | `scripts/prepare-release.py`, `scripts/release.py`, `generate-notices.py`, `build-media.sh`, `src-tauri/tauri*.conf.json`, `Info.plist`, `Entitlements.plist` | Version/material validation, dependency sources/notices, pinned media executables, shared and per-platform bundle settings |
 
 Bare Rust filenames in the table are relative to `src-tauri/src/`. Provider and model support is defined in the domain/catalog and provider implementations, not in this guide.
 
@@ -81,7 +81,7 @@ Record the commands, operating system, build identity, and outcome. Test counts 
 
 ## Native UI iteration
 
-Use `npm run desktop:ui` for full-fidelity UI refinement in a native development window. `scripts/dev-ui.ps1` selects the optional project-local Node runtime, verifies media checksums, enables debug test providers and sets persistent data under `.tmp/ui-dev/data`. `src-tauri/tauri.ui-dev.conf.json` gives it a separate app identity and visible development title. The installed app can remain running. Frontend changes reload through Vite; Rust changes rebuild and restart. This is an interactive workspace, not a disposable acceptance-test profile. Provider output/credentials are synthetic, but capture, clipboard and playback still have real desktop effects. Use the isolated acceptance suites below for repeatable verification.
+Use `npm run desktop:ui` for full-fidelity UI refinement in a native development window. `scripts/dev-ui.mjs` runs `scripts/dev-ui.ps1` on Windows, which selects the optional project-local Node runtime, verifies media checksums, enables debug test providers and sets persistent data under `.tmp/ui-dev/data`. `src-tauri/tauri.ui-dev.conf.json` gives it a separate app identity and visible development title. The installed app can remain running. Frontend changes reload through Vite; Rust changes rebuild and restart. This is an interactive workspace, not a disposable acceptance-test profile. Provider output/credentials are synthetic, but capture, clipboard and playback still have real desktop effects. Use the isolated acceptance suites below for repeatable verification.
 
 ## Native test modes and isolation
 
@@ -122,7 +122,7 @@ Use `XTALK_APP_PATH` only when deliberately testing a particular executable; oth
 
 Coordinate actual microphone, clipboard, global shortcut, and focus tests with the user if they are using the same Windows desktop. An unlocked desktop and correct foreground application matter. Do not treat interference from another microphone user or a locked session as an application regression without checking.
 
-The installed application normally uses `%LOCALAPPDATA%\com.xander.xtalk`, Windows Credential Manager, and `%TEMP%\x-talk\logs`. Never point destructive fixtures or Clear All tests at the owner's profile. General native test variables do not make a production-mode smoke run safe by themselves.
+The installed application normally uses `%LOCALAPPDATA%\com.xander.xtalk`, Windows Credential Manager, and `%TEMP%\x-talk\logs`; on macOS, `~/Library/Application Support/com.xander.xtalk`, the login keychain (service `com.xander.xtalk`), and `$TMPDIR/x-talk/logs`. Never point destructive fixtures or Clear All tests at the owner's profile. General native test variables do not make a production-mode smoke run safe by themselves.
 
 ## WSL and Windows build workflow
 
@@ -143,6 +143,17 @@ Keep the Windows build checkout on a Windows drive, for example `C:\dev\x-talk`.
 Local installer paths, release downloads, and the WSL `/mnt/c/temp` ↔ Windows `C:\temp` handoff are documented in [RELEASING.md](RELEASING.md#where-installers-live). Hosted CI publishes downloads; local copies are not automatic.
 
 Use native Git/SSH if it already provides the authorized repository identity. Git transport and the GitHub API can authenticate as different accounts. If a project-specific API token is supplied, pass it only to the relevant child process (for example via `GH_TOKEN`) without replacing global `gh` authentication. Do not print, source as shell code, or commit `.env`. The application does not load `.env`; the opt-in live Rust tests do.
+
+## macOS development workflow
+
+Use an Apple Silicon Mac with macOS 14.2 or later and the prerequisites in [README](../README.md#build-and-test). Nothing macOS-specific can be compiled or run on Linux or Windows; CI on GitHub's macOS runners is the first compiler for `cfg(target_os = "macos")` code.
+
+- Tauri copies every bundle resource when Cargo builds the `desktop` feature and fails if one is missing. For development, `brew install ffmpeg` and create empty `src-tauri/binaries/ffmpeg` and `ffprobe` placeholders plus the generated notices (`python3 scripts/generate-notices.py`). Debug builds treat empty placeholders as missing and use Homebrew's tools. Release builds and `desktop:debug`/`desktop:build` require the pinned native tools from `scripts/build-media.sh`.
+- `npm run desktop:dev` is the main loop. `npm run desktop:ui` works on a Mac too: `scripts/dev-ui.mjs` applies the same isolated profile and synthetic providers itself, and warns when the media tools are unpinned development copies.
+- Binaries started from a terminal (`desktop:dev`, `cargo test`, `target/debug/x-talk`) are not app bundles; macOS normally attributes their microphone and system-audio access to the terminal app, so the prompt and the Privacy & Security entry name the terminal. Only the bundled `x-talk.app` asks under its own name and exercises `Info.plist`, the entitlements, and the ad-hoc signature. Test permissions, start at login, and updates with the bundle from `npm run desktop:build`.
+- To reset a permission while testing the bundle, `tccutil reset Microphone com.xander.xtalk` (and `AudioCapture` for system audio). Keychain items appear in Keychain Access under `com.xander.xtalk`. Never run destructive fixtures against the owner's real profile.
+- Desktop end-to-end tests stay Windows-only because tauri-driver has no macOS WebDriver. On a Mac, run `npm test`, `npm run check`, the Rust tests with `--features desktop`, and a manual pass over the areas listed as untested in [SPEC](../SPEC.md#macos-support). Record macOS version, Mac model, build identity, and audio devices with the results.
+- WKWebView differs from WebView2: it needs `-webkit-backdrop-filter` alongside `backdrop-filter` on macOS 14, has no Segoe UI fonts (keep `system-ui` fallbacks), and relies on the app menu for Cmd+C/V/A in text fields. Detect the platform only through `src/platform.ts`.
 
 ## Known pitfalls and their fixes
 
