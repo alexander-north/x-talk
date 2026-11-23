@@ -24,7 +24,7 @@ pub struct Status {
     pub error: Option<String>,
     pub warning: Option<String>,
 }
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 impl Status {
     fn capture_ended(&mut self, elapsed: f64, error: Option<&AppError>) {
         self.active = false;
@@ -41,7 +41,7 @@ pub struct Options {
     pub microphone_device: Option<String>,
     pub output_device: Option<String>,
 }
-/// Holds peaks across empty WASAPI passes; does not alter audio samples.
+/// Holds peaks across empty device passes; does not alter audio samples.
 #[derive(Default)]
 pub struct PeakMeter {
     value: f32,
@@ -93,18 +93,18 @@ impl Monitor {
         let thread = std::thread::Builder::new()
             .name("meeting-monitor".into())
             .spawn(move || {
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "macos"))]
                 let result = native::monitor(
                     worker_options,
                     worker_status.clone(),
                     worker_stop,
                     worker_renewed,
                 );
-                #[cfg(not(windows))]
+                #[cfg(not(any(windows, target_os = "macos")))]
                 let result: Result<()> = {
                     let _ = (worker_options, worker_stop, worker_renewed);
                     Err(AppError::input(
-                        "Device monitoring is supported on Windows.",
+                        "Device monitoring is supported on Windows and macOS.",
                     ))
                 };
                 if let Ok(mut state) = worker_status.lock() {
@@ -158,7 +158,7 @@ pub struct Track {
     pub channels: u16,
     pub microphone: bool,
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn compatible_format(current: &Track, next: &Track) -> Result<()> {
     if current.rate != next.rate || current.channels != next.channels {
         return Err(AppError::input("The selected device uses a different sample rate or channel count. Recording continues on the current device. Stop this meeting before choosing that device."));
@@ -176,7 +176,7 @@ pub struct Journal {
     #[serde(default)]
     pub warning: Option<String>,
 }
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 struct DeviceChange {
     microphone: bool,
     device: Option<String>,
@@ -249,9 +249,7 @@ impl Session {
                 // Do not join an unresponsive driver on the application thread.
                 Err(match result {
                     Ok(Err(e)) => e,
-                    _ => AppError::input(
-                        "Audio devices did not become ready. Check Windows audio settings.",
-                    ),
+                    _ => AppError::input(NOT_READY),
                 })
             }
         }
@@ -300,7 +298,13 @@ impl Drop for Session {
     }
 }
 
+#[cfg(windows)]
+const NOT_READY: &str = "Audio devices did not become ready. Check Windows audio settings.";
 #[cfg(not(windows))]
+const NOT_READY: &str =
+    "Audio devices did not become ready. Check the devices in System Settings > Sound.";
+
+#[cfg(not(any(windows, target_os = "macos")))]
 #[allow(clippy::too_many_arguments)]
 fn run(
     _: String,
@@ -314,10 +318,10 @@ fn run(
     _: std::sync::mpsc::Receiver<DeviceChange>,
 ) -> Result<Journal> {
     Err(AppError::input(
-        "System audio recording is supported on Windows.",
+        "Meeting recording is supported on Windows and macOS.",
     ))
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 #[allow(clippy::too_many_arguments)]
 fn run(
     id: String,
@@ -343,12 +347,20 @@ fn run(
     )
 }
 
+/// Platform-neutral writer shared with the macOS backend.
+#[cfg(windows)]
+use super::capture_core::DiskWriter;
+
+#[cfg(target_os = "macos")]
+#[path = "capture_macos.rs"]
+mod native;
+
 #[cfg(windows)]
 mod native {
     use super::*;
     use std::{
         fs::File,
-        io::{BufWriter, Write},
+        io::Write,
         time::{Duration, Instant},
     };
     use windows::{
@@ -367,93 +379,6 @@ mod native {
             unsafe {
                 CoUninitialize();
             }
-        }
-    }
-    enum DiskMessage {
-        Data(Vec<u8>),
-        Sync,
-    }
-    // Disk latency must never stall WASAPI. Queue capacity bounds memory to 4 MiB
-    // per source; saturation fails explicitly instead of dropping samples.
-    struct DiskWriter {
-        sender: Option<std::sync::mpsc::SyncSender<DiskMessage>>,
-        thread: Option<std::thread::JoinHandle<Result<()>>>,
-        buffer: Vec<u8>,
-    }
-    impl DiskWriter {
-        fn new(file: File) -> Result<Self> {
-            let (sender, receiver) = std::sync::mpsc::sync_channel(128);
-            let thread = std::thread::Builder::new()
-                .name("meeting-audio-writer".into())
-                .spawn(move || {
-                    let mut output = BufWriter::with_capacity(256 * 1024, file);
-                    while let Ok(message) = receiver.recv() {
-                        match message {
-                            DiskMessage::Data(bytes) => output.write_all(&bytes)?,
-                            DiskMessage::Sync => {
-                                output.flush()?;
-                                output.get_ref().sync_data()?;
-                            }
-                        }
-                    }
-                    output.flush()?;
-                    output.get_ref().sync_data()?;
-                    Ok(())
-                })?;
-            Ok(Self {
-                sender: Some(sender),
-                thread: Some(thread),
-                buffer: Vec::with_capacity(32768),
-            })
-        }
-        fn send(&self, message: DiskMessage) -> std::io::Result<()> {
-            self.sender
-                .as_ref()
-                .ok_or_else(|| std::io::Error::other("Audio writer is closed"))?
-                .try_send(message)
-                .map_err(|_| {
-                    std::io::Error::other(
-                        "Audio could not be saved fast enough. The partial recording is preserved.",
-                    )
-                })
-        }
-        fn sync(&mut self) -> Result<()> {
-            self.flush()?;
-            self.send(DiskMessage::Sync)?;
-            Ok(())
-        }
-        fn finish(&mut self) -> Result<()> {
-            let flushed = self.flush();
-            self.sender.take();
-            if let Some(thread) = self.thread.take() {
-                thread
-                    .join()
-                    .map_err(|_| AppError::input("The audio writer stopped unexpectedly."))??;
-            }
-            flushed?;
-            Ok(())
-        }
-    }
-    impl Write for DiskWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            let count = bytes.len().min(32768 - self.buffer.len());
-            self.buffer.extend_from_slice(&bytes[..count]);
-            if self.buffer.len() == 32768 {
-                self.flush()?;
-            }
-            Ok(count)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            if !self.buffer.is_empty() {
-                let buffer = std::mem::replace(&mut self.buffer, Vec::with_capacity(32768));
-                self.send(DiskMessage::Data(buffer))?;
-            }
-            Ok(())
-        }
-    }
-    impl Drop for DiskWriter {
-        fn drop(&mut self) {
-            let _ = self.finish();
         }
     }
     struct Input {

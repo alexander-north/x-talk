@@ -3,6 +3,7 @@
  import {meetings,captureStatus,type MonitorStatus} from '../../meetings/ipc';
  import {duration,message} from '../../ipc';
  import {notify} from '../../notifications';
+ import {isMac} from '../../platform';
  $effect(()=>{if(error)notify(error,true);});
  import Icon from '../Icon.svelte';
  import LevelMeter from '../LevelMeter.svelte';
@@ -49,9 +50,9 @@
  {#if $captureStatus.active&&$captureStatus.elapsed<15}<p class="responsibility" role="status">You are responsible for letting everyone know they're being recorded.</p>{/if}
  </div></section>
  {#if completed}<div class="meeting-complete-actions"><button onclick={()=>completed=null}>New recording</button><button onclick={()=>openMeeting(completed!)}>Open meeting</button></div>{:else if !compact}<section class="meeting-sources" aria-label="Meeting audio sources">
-  <div class="source-row"><label class="check"><input type="checkbox" bind:checked={microphone} disabled={!!$captureStatus.id||busy}/>Microphone</label><select value={microphoneDevice} onchange={event=>changeDevice(true,event)} disabled={!microphone||$captureStatus.finalizing||busy} aria-label="Meeting microphone"><option value="">Windows default microphone</option>{#each devices.microphones as d}<option value={d.id}>{d.name}</option>{/each}</select>
+  <div class="source-row"><label class="check"><input type="checkbox" bind:checked={microphone} disabled={!!$captureStatus.id||busy}/>Microphone</label><select value={microphoneDevice} onchange={event=>changeDevice(true,event)} disabled={!microphone||$captureStatus.finalizing||busy} aria-label="Meeting microphone"><option value="">{isMac?'System default microphone':'Windows default microphone'}</option>{#each devices.microphones as d}<option value={d.id}>{d.name}</option>{/each}</select>
   {#if $captureStatus.active&&$captureStatus.microphone}<button aria-pressed={$captureStatus.microphone_muted} disabled={busy} onclick={()=>run(()=>meetings.mute(true,!$captureStatus!.microphone_muted))}>{$captureStatus.microphone_muted?'Unmute microphone':'Mute microphone'}</button>{/if}<LevelMeter label="Microphone level" enabled={microphone} muted={$captureStatus.microphone_muted} level={$captureStatus.id?$captureStatus.microphone_level:monitor?.microphone_level??0}/></div>
-  <div class="source-row"><label class="check"><input type="checkbox" bind:checked={system} disabled={!!$captureStatus.id||busy}/>System audio</label><select value={outputDevice} onchange={event=>changeDevice(false,event)} disabled={!system||$captureStatus.finalizing||busy} aria-label="Meeting system output"><option value="">Windows default output</option>{#each devices.outputs as d}<option value={d.id}>{d.name}</option>{/each}</select>
+  <div class="source-row"><label class="check"><input type="checkbox" bind:checked={system} disabled={!!$captureStatus.id||busy}/>System audio</label><select value={outputDevice} onchange={event=>changeDevice(false,event)} disabled={!system||$captureStatus.finalizing||busy} aria-label="Meeting system output"><option value="">{isMac?'System default output':'Windows default output'}</option>{#each devices.outputs as d}<option value={d.id}>{d.name}</option>{/each}</select>
   {#if $captureStatus.active&&$captureStatus.system}<button aria-pressed={$captureStatus.system_muted} disabled={busy} onclick={()=>run(()=>meetings.mute(false,!$captureStatus!.system_muted))}>{$captureStatus.system_muted?'Unmute system audio':'Mute system audio'}</button>{/if}<LevelMeter label="System audio level" enabled={system} muted={$captureStatus.system_muted} level={$captureStatus.id?$captureStatus.system_level:monitor?.system_level??0}/></div>
   {#if monitor?.error}<p class="error-text" role="status">{monitor.error}</p>{/if}
  </section>{/if}

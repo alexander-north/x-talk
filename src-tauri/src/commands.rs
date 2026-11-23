@@ -111,7 +111,7 @@ pub async fn state(app: tauri::AppHandle) -> Result<State> {
         let s = app.state::<AppState>();
         let credentials = PROVIDERS
             .into_iter()
-            .map(|p| (p.into(), s.keys.get(p).is_ok()))
+            .map(|p| (p.into(), s.keys.exists(p).is_ok()))
             .collect();
         let result = Ok(State {
             settings: s.store.settings()?,
@@ -209,9 +209,9 @@ pub async fn do_capture(app: &tauri::AppHandle, action: &str) -> Result<()> {
             ensure_idle(&s)?;
             let settings = s.store.settings()?;
             let snapshot = s.store.snapshot()?;
-            s.keys.get(&snapshot.transcription.provider)?;
+            s.keys.exists(&snapshot.transcription.provider)?;
             if let Some(p) = &snapshot.preset {
-                s.keys.get(&p.provider)?;
+                s.keys.exists(&p.provider)?;
             }
             Action::Start {
                 snapshot: Box::new(snapshot),
@@ -259,9 +259,9 @@ pub async fn import_audio(app: tauri::AppHandle) -> Result<()> {
             }
             ensure_idle(&s)?;
             snapshot = s.store.snapshot()?;
-            s.keys.get(&snapshot.transcription.provider)?;
+            s.keys.exists(&snapshot.transcription.provider)?;
             if let Some(p) = &snapshot.preset {
-                s.keys.get(&p.provider)?;
+                s.keys.exists(&p.provider)?;
             }
             s.store.reserve(&reserve)?;
             s.import_cancel.store(false, Ordering::Release);
@@ -402,9 +402,9 @@ pub async fn retry(app: tauri::AppHandle, id: String, revision: u64, kind: Strin
         }
         let snap = Snapshot::capture(&settings, s.store.preset(&settings.preset_id)?);
         if kind == "transcribe" {
-            s.keys.get(&snap.transcription.provider)?;
+            s.keys.exists(&snap.transcription.provider)?;
         } else if let Some(p) = &snap.preset {
-            s.keys.get(&p.provider)?;
+            s.keys.exists(&p.provider)?;
         }
         s.store.retry(&id, revision, &kind, snap)?;
         s.wake.notify_one();
@@ -610,7 +610,11 @@ pub async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<
                     AppError::new(
                         "settings",
                         "autostart",
-                        "Windows login startup could not be changed.",
+                        if cfg!(target_os = "macos") {
+                            "macOS login startup could not be changed."
+                        } else {
+                            "Windows login startup could not be changed."
+                        },
                     )
                 })?;
             }
@@ -709,7 +713,7 @@ pub async fn test_transformation(
             ));
         }
         ensure_idle(&s)?;
-        s.keys.get(&preset.provider)?;
+        s.keys.exists(&preset.provider)?;
         let mut test = s
             .test
             .lock()
@@ -934,10 +938,30 @@ pub async fn open_repository() -> Result<()> {
             .args(["url.dll,FileProtocolHandler", URL])
             .spawn()?;
         #[cfg(not(windows))]
-        std::process::Command::new("xdg-open").arg(URL).spawn()?;
+        open_with_system(std::ffi::OsStr::new(URL))?;
         Ok(())
     })
     .await
+}
+/// Open a URL or folder with the default handler (`open` on macOS, `xdg-open` on Linux).
+/// Waits for the launcher, which returns once the handler is started, so no zombie remains.
+#[cfg(not(windows))]
+fn open_with_system(target: &std::ffi::OsStr) -> Result<()> {
+    let launcher = if cfg!(target_os = "macos") {
+        "/usr/bin/open"
+    } else {
+        "xdg-open"
+    };
+    let status = std::process::Command::new(launcher)
+        .arg(target)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if !status.success() {
+        return Err(AppError::input("The system could not open it."));
+    }
+    Ok(())
 }
 #[tauri::command]
 pub fn preview_sound(app: tauri::AppHandle, event: String) -> Result<()> {
@@ -971,9 +995,7 @@ pub async fn open_logs_folder(app: tauri::AppHandle) -> Result<()> {
                 .spawn()?;
         }
         #[cfg(not(windows))]
-        {
-            std::process::Command::new("xdg-open").arg(path).spawn()?;
-        }
+        open_with_system(path.as_os_str())?;
         tracing::info!("logs_folder_opened");
         Ok(())
     })

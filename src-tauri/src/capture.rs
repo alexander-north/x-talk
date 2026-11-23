@@ -275,6 +275,7 @@ fn start(
     if realtime {
         validate_realtime(&snapshot.transcription)?;
     }
+    ensure_microphone_access()?;
     let host = cpal::default_host();
     let device = if let Some(selected) = selected {
         let identifier = selected.parse().map_err(|_| {
@@ -461,9 +462,7 @@ Ok(count)}
             if let Some(w) = s.writer.take() {
                 let _ = w.join();
             }
-            return Err(AppError::input(
-                "Microphone could not start. Check Windows microphone privacy settings.",
-            ));
+            return Err(AppError::input(MICROPHONE_START_FAILED));
         }
         let timeout = Instant::now();
         while !ready.load(Ordering::Acquire) {
@@ -473,7 +472,7 @@ Ok(count)}
                 if let Some(w) = s.writer.take() {
                     let _ = w.join();
                 }
-                return Err(AppError::input("Microphone did not deliver audio. Check the selected device and Windows microphone permissions."));
+                return Err(AppError::input(MICROPHONE_SILENT));
             }
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -485,6 +484,92 @@ Ok(count)}
         let _ = std::fs::remove_file(journal_path(store, &id));
     }
     result
+}
+#[cfg(not(target_os = "macos"))]
+const MICROPHONE_START_FAILED: &str =
+    "Microphone could not start. Check Windows microphone privacy settings.";
+#[cfg(not(target_os = "macos"))]
+const MICROPHONE_SILENT: &str = "Microphone did not deliver audio. Check the selected device and Windows microphone permissions.";
+#[cfg(target_os = "macos")]
+const MICROPHONE_START_FAILED: &str =
+    "Microphone could not start. Check System Settings > Privacy & Security > Microphone.";
+#[cfg(target_os = "macos")]
+const MICROPHONE_SILENT: &str = "Microphone did not deliver audio. Check the selected device and System Settings > Privacy & Security > Microphone.";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MICROPHONE_DENIED: &str = "x-talk is not allowed to use the microphone. Turn on x-talk in System Settings > Privacy & Security > Microphone, then start recording again.";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MICROPHONE_REQUESTED: &str =
+    "Allow microphone access for x-talk in the macOS prompt, then start recording again.";
+
+/// Microphone permission as reported by the OS, before any input stream is opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MicrophoneAccess {
+    Granted,
+    Denied,
+    /// The user has not been asked yet (macOS TCC).
+    Undetermined,
+}
+/// Map a permission state to the capture start decision. macOS does not fail a denied
+/// input stream: CoreAudio delivers silence, so a denied or still-undecided permission
+/// must stop capture before it records an empty original.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn access_decision(access: MicrophoneAccess) -> Result<()> {
+    match access {
+        MicrophoneAccess::Granted => Ok(()),
+        MicrophoneAccess::Denied => Err(AppError::new("capture", "permission", MICROPHONE_DENIED)),
+        MicrophoneAccess::Undetermined => {
+            Err(AppError::new("capture", "permission", MICROPHONE_REQUESTED))
+        }
+    }
+}
+/// Fail fast with an actionable message when the OS will not deliver microphone audio.
+/// On macOS an undetermined permission triggers the system prompt and returns an error,
+/// so the user retries once they have answered it. Elsewhere this always succeeds:
+/// Windows reports privacy denial through the stream itself.
+/// Meeting capture can call this before opening its microphone, too.
+pub fn ensure_microphone_access() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let access = macos::microphone_access();
+        tracing::info!(?access, "microphone_access_checked");
+        if access == MicrophoneAccess::Undetermined {
+            macos::request_microphone_access();
+        }
+        access_decision(access)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::MicrophoneAccess;
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_avf_audio::{AVAudioApplication, AVAudioApplicationRecordPermission};
+    /// AVAudioApplication (AVFAudio, macOS 14+) reports the TCC microphone state.
+    pub(super) fn microphone_access() -> MicrophoneAccess {
+        // SAFETY: class method returning the process-wide singleton; recordPermission is a
+        // read-only property getter.
+        let permission = unsafe { AVAudioApplication::sharedInstance().recordPermission() };
+        if permission == AVAudioApplicationRecordPermission::Granted {
+            MicrophoneAccess::Granted
+        } else if permission == AVAudioApplicationRecordPermission::Denied {
+            MicrophoneAccess::Denied
+        } else {
+            MicrophoneAccess::Undetermined
+        }
+    }
+    /// Show the system microphone prompt without waiting for the answer.
+    pub(super) fn request_microphone_access() {
+        let handler = RcBlock::new(|granted: Bool| {
+            tracing::info!(granted = granted.as_bool(), "microphone_access_answered");
+        });
+        // SAFETY: the block is retained by the callee for as long as it needs it and may be
+        // called on any thread; it only logs.
+        unsafe { AVAudioApplication::requestRecordPermissionWithCompletionHandler(&handler) };
+    }
 }
 fn build<T>(
     device: &cpal::Device,
@@ -907,8 +992,8 @@ pub async fn play(
     let mut child = media
         .decode_playback_at(path, rate, channels, start)
         .await?;
-    #[cfg(windows)]
-    let _guard = crate::media::ChildJob::attach(&child)?;
+    // Supervise the decoder (job object on Windows, exit-time kill registry on Unix).
+    let guard = crate::media::ChildJob::attach(&child)?;
     let mut stdout = child
         .stdout
         .take()
@@ -946,6 +1031,8 @@ if stop.load(Ordering::Acquire)||fault.load(Ordering::Acquire){
 let _=child.kill().await;
 }
 let status=child.wait().await?;
+// Reaped: release the pid before anything else can reuse it.
+drop(guard);
 if !status.success()&&!stop.load(Ordering::Acquire){
 return Err(AppError::input("Original audio could not be played."));
 }
@@ -1133,9 +1220,16 @@ mod recovery_tests {
             assert_eq!(*feedback.0.lock().unwrap(), ["stopped", "queued"]);
         }
     }
-    #[cfg(windows)]
+    /// A read-only original makes the post-rename durability flush fail on Windows and on
+    /// Unix (EACCES). Root ignores file modes, so the Unix run is skipped there.
     #[test]
     fn genuine_flush_failure_preserves_audio_and_journal_without_admission() {
+        #[cfg(unix)]
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipped: file modes do not restrict root");
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
         let session = finalized_session(&store, 1);
@@ -1156,6 +1250,18 @@ mod recovery_tests {
         assert!(store.entries(0).unwrap().is_empty());
         assert!(store.jobs().unwrap().is_empty());
         std::fs::set_permissions(preserved, original_permissions).unwrap();
+    }
+    #[test]
+    fn microphone_permission_denial_is_actionable_before_any_stream_opens() {
+        assert!(access_decision(MicrophoneAccess::Granted).is_ok());
+        let denied = access_decision(MicrophoneAccess::Denied).unwrap_err();
+        assert_eq!(denied.category, "permission");
+        assert!(denied.message.contains("Privacy & Security > Microphone"));
+        let undetermined = access_decision(MicrophoneAccess::Undetermined).unwrap_err();
+        assert_eq!(undetermined.category, "permission");
+        assert!(undetermined.message.contains("start recording again"));
+        #[cfg(not(target_os = "macos"))]
+        assert!(ensure_microphone_access().is_ok());
     }
     #[test]
     fn malformed_capture_journal_does_not_block_other_recovery_or_fresh_work() {

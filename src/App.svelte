@@ -19,6 +19,7 @@
  import ToastHost from './components/ToastHost.svelte';
  import RecordingOutline from './components/RecordingOutline.svelte';
  import {notify} from './notifications';
+ import {formatShortcut,shortcutTitle} from './shortcuts';
  let recorderMode=$state<'dictation'|'meeting'>('dictation');
  let meetingBusy=$state(false);
  let meetingImport=$state(false),meetingId=$state<string|null>(null);
@@ -112,7 +113,7 @@
   {:else if view==='meetings'}<Meetings initialId={meetingId} {playback} refreshPlayback={refreshProgress} recording={!!snapshot?.capture.active||!!$captureStatus?.id}/>
   {:else}<SettingsView bind:this={settingsView} {snapshot} {write} {refresh} {guard}/>
   {/if}
-  {#if view==='record'&&snapshot}<div class="recorder-bottom"><button class="import-footer" disabled={busy||snapshot.operation_busy||!!snapshot.capture.active||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode==='dictation'?run(api.import):meetingImport=true}><Icon name="upload" size={13}/>Import audio</button><div class="recorder-modes" role="group" aria-label="Recording mode">{#each ['dictation','meeting'] as mode}<button class:selected={recorderMode===mode} aria-pressed={recorderMode===mode} disabled={!!snapshot.capture.active||!!snapshot.capture.finalizing||snapshot.operation_busy||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode=mode as 'dictation'|'meeting'}>{mode==='dictation'?'Dictation':'Meeting'}</button>{/each}</div><div class="shortcut-hints">{#if snapshot.settings.shortcuts.toggle}<span><kbd>{snapshot.settings.shortcuts.toggle}</kbd> record / stop</span>{/if}{#if snapshot.settings.shortcuts.cancel}<span><kbd>{snapshot.settings.shortcuts.cancel}</kbd> cancel</span>{/if}</div></div>{/if}
+  {#if view==='record'&&snapshot}<div class="recorder-bottom"><button class="import-footer" disabled={busy||snapshot.operation_busy||!!snapshot.capture.active||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode==='dictation'?run(api.import):meetingImport=true}><Icon name="upload" size={13}/>Import audio</button><div class="recorder-modes" role="group" aria-label="Recording mode">{#each ['dictation','meeting'] as mode}<button class:selected={recorderMode===mode} aria-pressed={recorderMode===mode} disabled={!!snapshot.capture.active||!!snapshot.capture.finalizing||snapshot.operation_busy||!!$captureStatus?.id||meetingBusy} onclick={()=>recorderMode=mode as 'dictation'|'meeting'}>{mode==='dictation'?'Dictation':'Meeting'}</button>{/each}</div><div class="shortcut-hints">{#if snapshot.settings.shortcuts.toggle}<span><kbd title={shortcutTitle(snapshot.settings.shortcuts.toggle)}>{formatShortcut(snapshot.settings.shortcuts.toggle)}</kbd> record / stop</span>{/if}{#if snapshot.settings.shortcuts.cancel}<span><kbd title={shortcutTitle(snapshot.settings.shortcuts.cancel)}>{formatShortcut(snapshot.settings.shortcuts.cancel)}</kbd> cancel</span>{/if}</div></div>{/if}
  </div>
  {#if meetingImport}<MeetingImport close={()=>meetingImport=false} created={id=>openMeeting(id)}/>{/if}
  <ToastHost/>

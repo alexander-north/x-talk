@@ -30,30 +30,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
     "icon": [
-      "icons/icon.png",
-      "icons/icon.ico"
+      "icons/icon.png"
     ],
     "resources": {
-      "binaries/ffmpeg.exe": "binaries/ffmpeg.exe",
-      "binaries/ffprobe.exe": "binaries/ffprobe.exe",
       "binaries/NOTICE.txt": "binaries/NOTICE.txt",
       "binaries/FFmpeg-LICENSE.txt": "binaries/FFmpeg-LICENSE.txt",
       "binaries/THIRD-PARTY-NOTICES.txt": "binaries/THIRD-PARTY-NOTICES.txt",
       "../LICENSE": "LICENSE",
       "../NOTICE": "NOTICE"
-    },
-    "windows": {
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper",
-        "silent": true
-      },
-      "nsis": {
-        "installMode": "currentUser"
-      }
     },
     "license": "Apache-2.0"
   },

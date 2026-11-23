@@ -45,6 +45,10 @@ impl Store {
         let path = root.join("x-talk.sqlite3");
         let mut db = Connection::open(&path)?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;")?;
+        // macOS fsync(2) does not flush the drive cache; F_FULLFSYNC matches the Windows
+        // FlushFileBuffers guarantee that synchronous=FULL relies on.
+        #[cfg(target_os = "macos")]
+        db.execute_batch("PRAGMA fullfsync=ON; PRAGMA checkpoint_fullfsync=ON;")?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version > 3 {
             return Err(AppError::new(
@@ -1111,6 +1115,8 @@ pub(crate) fn publish_journal(path: &Path, bytes: &[u8]) -> Result<()> {
             return Err(std::io::Error::last_os_error().into());
         }
     }
+    // POSIX rename(2) atomically replaces the target (APFS included). File::sync_all uses
+    // F_FULLFSYNC on Apple platforms, so the file and directory flushes reach stable storage.
     #[cfg(not(windows))]
     {
         std::fs::rename(&temporary, path)?;

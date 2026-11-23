@@ -7,5 +7,10 @@ Corresponding source is the unchanged official archive; configure flags are in t
 These separate executables communicate through files and pipes.
 License: FFmpeg-LICENSE.txt
 
+Windows x64 (MinGW-w64 cross-build, static):
 ffmpeg.exe: 15ab01b2a95b529bb032841425f96510d85f8da807233a55a4a6f7b460c6d5fa
 ffprobe.exe: 93148b7a0537924be062920d278e1b092a91cb0f249c8929c6348bb61b8064e7
+
+macOS Apple Silicon (native clang build, macOS 14.2 or later, links only macOS system libraries):
+Built from the source above for each app build. Each GitHub release publishes the SHA-256
+checksums of its tools as x-talk_<version>_aarch64_ffmpeg-build.json.

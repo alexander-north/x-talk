@@ -5,6 +5,7 @@
  import type {AppState,Transformation,Settings} from '../types';
  import {providerNames,settingsSections,textDirty,thinkingLabel,thinkingValue,type SettingsChange} from '../settings';
  import {meetings} from '../meetings/ipc';
+ import {isMac} from '../platform';
  let meetingRetention=$state<number|null>(50);
  onMount(()=>{void meetings.retention().then(value=>meetingRetention=value).catch(e=>error=message(e));});
  async function retainMeetings(value:number|null){await task(async()=>{await meetings.setRetention(value);meetingRetention=value;},'Meeting audio retention saved');}
@@ -69,7 +70,7 @@
 
  {#if section==='General'}
   <label>Appearance<select value={settings.theme} onchange={e=>{const value=e.currentTarget.value;void change(s=>({...s,theme:value}));}}><option value="system">Auto · follow system</option><option value="day">Light</option><option value="night">Dark</option></select></label>
-  {#each [['topmost','Always on top'],['autostart','Start at Windows login in the tray'],['close_to_tray','Keep running when the window is closed']] as [field,label]}<label class="check"><input type="checkbox" checked={settings[field as 'topmost'|'autostart'|'close_to_tray']} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,[field]:value}));}}>{label}</label>{/each}
+  {#each [['topmost','Always on top'],['autostart',isMac?'Start at login in the menu bar':'Start at Windows login in the tray'],['close_to_tray','Keep running when the window is closed']] as [field,label]}<label class="check"><input type="checkbox" checked={settings[field as 'topmost'|'autostart'|'close_to_tray']} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,[field]:value}));}}>{label}</label>{/each}
   <Updates {snapshot} {guard} change={change}/>
   <h2>Diagnostics</h2><p class="help">Version {snapshot.diagnostics.version} · Build {snapshot.diagnostics.build_id}</p><label class="check"><input id="diagnostic-logging" type="checkbox" checked={settings.diagnostic_logging} onchange={e=>{const value=e.currentTarget.checked;void change(s=>({...s,diagnostic_logging:value}));}}>Enable diagnostic logging</label><p class="help">Logs contain app activity and error codes, without API keys, audio, or text content. Nothing is uploaded. Changes apply immediately.</p><p class="help">Logs folder: <code>{snapshot.diagnostics.directory}</code></p><button onclick={()=>task(api.openLogs,'Logs folder opened')}>Open logs folder</button>{#if snapshot.diagnostics.error}<p class="error-text" role="alert">{snapshot.diagnostics.error}</p>{/if}{#if snapshot.diagnostics.dropped_events}<p class="help">{snapshot.diagnostics.dropped_events} diagnostic events could not be written.</p>{/if}
   <h2>Audio retention</h2><label class="check"><input type="checkbox" checked={settings.keep_audio===null} onchange={e=>{const value=e.currentTarget.checked?null:100;void change(s=>({...s,keep_audio:value}));}}>Keep all original audio</label>{#if settings.keep_audio!==null}<label>Keep audio for the latest N entries<input type="number" value={settings.keep_audio} min="1" max="100000" step="1" required onchange={e=>{const value=e.currentTarget.valueAsNumber;void change(s=>({...s,keep_audio:value}));}}></label>{/if}<p class="help">Older text remains in your library. Pending work keeps its audio until it completes or is discarded.</p>
@@ -85,7 +86,7 @@
   <ShortcutEditor bind:value={shortcuts} saved={settings.shortcuts} saving={saving>0} save={saveShortcuts}/>
 
  {:else if section==='API Keys'}
-  <p class="help">Keys are stored in Windows Credential Manager. Adding a key enables that provider in the model pickers. OpenAI uses one key for speech and transformations.</p>
+  <p class="help">Keys are stored in {isMac?'your macOS login keychain':'Windows Credential Manager'}. Adding a key enables that provider in the model pickers. OpenAI uses one key for speech and transformations.</p>
   <div class="credential-list">{#each Object.entries(providerNames) as [provider,name]}
    <section class="credential-row" aria-label={`${name} API key`}>
     <div class="credential-summary"><div><h3>{name}</h3><span class="credential-status"><span class="status-dot" class:configured={snapshot.credentials[provider]}></span>{snapshot.credentials[provider]?'Key saved':'No key'}</span></div><div class="actions">

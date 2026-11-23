@@ -154,7 +154,10 @@ pub(crate) fn recording_indicator(app: &tauri::AppHandle, dictation: bool, meeti
         "Ready"
     };
     if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_icon(Some(tray_image(active)));
+        // Plain set_icon clears the macOS template flag; this sets both at once (set_icon
+        // elsewhere).
+        let _ =
+            tray.set_icon_with_as_template(Some(menu_bar_image(active)), cfg!(target_os = "macos"));
         let _ = tray.set_tooltip(Some(format!("x-talk · {label}")));
     }
     if let Some(window) = app.get_webview_window("main") {
@@ -172,11 +175,33 @@ pub(crate) fn recording_indicator(app: &tauri::AppHandle, dictation: bool, meeti
             base.to_owned()
         };
         let _ = window.set_title(&title);
+        #[cfg(not(target_os = "macos"))]
         let _ = window.set_icon(tray_image(active));
         #[cfg(target_os = "windows")]
         let _ = window.set_overlay_icon(active.then(|| tray_image(true)));
+        // macOS windows have no icon; the Dock tile badge is the taskbar-overlay equivalent.
+        #[cfg(target_os = "macos")]
+        let _ = window.set_badge_label(active.then(|| "REC".to_owned()));
     }
 }
+/// Tray icon: the colored app icon/indicator, or on macOS a monochrome menu bar template
+/// (heart, plus a dot while recording) that adapts to light and dark menu bars.
+fn menu_bar_image(active: bool) -> tauri::image::Image<'static> {
+    #[cfg(target_os = "macos")]
+    {
+        let bytes: &'static [u8] = if active {
+            include_bytes!("../icons/tray-template-active.png")
+        } else {
+            include_bytes!("../icons/tray-template.png")
+        };
+        tauri::image::Image::from_bytes(bytes).expect("bundled menu bar icon")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        tray_image(active)
+    }
+}
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) fn tray_image(active: bool) -> tauri::image::Image<'static> {
     if !active {
         return tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
@@ -220,7 +245,11 @@ pub fn show(app: &tauri::AppHandle) {
 pub fn shortcuts(app: &tauri::AppHandle, old: Option<&Shortcuts>, new: &Shortcuts) -> Result<()> {
     let parse = |s: &str| {
         s.parse::<Shortcut>().map_err(|_| {
-            AppError::input("Invalid shortcut. Use a combination such as Ctrl+Alt+Space.")
+            AppError::input(if cfg!(target_os = "macos") {
+                "Invalid shortcut. Use a combination such as Control+Option+Space."
+            } else {
+                "Invalid shortcut. Use a combination such as Ctrl+Alt+Space."
+            })
         })
     };
     let parse_all = |s: &Shortcuts| -> Result<Vec<Shortcut>> {
@@ -377,7 +406,8 @@ pub fn run() {
             diagnostics.install();
             tracing::info!(version = env!("CARGO_PKG_VERSION"), pid = std::process::id(),
                 session = diagnostics.status().session, build_id = env!("XTALK_BUILD_ID"),
-                debug = cfg!(debug_assertions), test_build = cfg!(feature = "test-providers"), "application_start");
+                debug = cfg!(debug_assertions), test_build = cfg!(feature = "test-providers"),
+                os = std::env::consts::OS, arch = std::env::consts::ARCH, "application_start");
             tracing::info!("storage_open_started");
             let store = Store::open(&root).inspect_err(|e| {
                 tracing::error!(stage = e.stage, category = e.category, "storage_open_failed");
@@ -425,18 +455,16 @@ pub fn run() {
             } else {
                 (transcription, transformation)
             };
-            #[cfg(any(not(debug_assertions), windows))]
+            // Bundled tools live in <resources>/binaries. Debug builds outside Windows fall back to
+            // PATH, Homebrew and /usr/bin when the bundled tool is missing.
             let tools = app.path().resource_dir()?.join("binaries");
-            #[cfg(any(not(debug_assertions), windows))]
+            let fallback = cfg!(all(debug_assertions, not(windows)));
+            let search = if fallback { crate::media::development_search_path() } else { Vec::new() };
             let media = Arc::new(Ffmpeg {
-                ffmpeg: tools.join("ffmpeg.exe"),
-                ffprobe: tools.join("ffprobe.exe"),
+                ffmpeg: crate::media::resolve_tool("ffmpeg", &tools, &search, fallback),
+                ffprobe: crate::media::resolve_tool("ffprobe", &tools, &search, fallback),
             });
-            #[cfg(all(debug_assertions, not(windows)))]
-            let media = Arc::new(Ffmpeg {
-                ffmpeg: "/usr/bin/ffmpeg".into(),
-                ffprobe: "/usr/bin/ffprobe".into(),
-            });
+            tracing::info!(bundled = media.ffmpeg.starts_with(&tools), "media_tools_resolved");
             let processing_media: Arc<dyn crate::media::MediaProcessor> = media.clone();
             #[cfg(feature = "test-providers")]
             let processing_media: Arc<dyn crate::media::MediaProcessor> =
@@ -519,7 +547,8 @@ pub fn run() {
             }
             let menu = menu.build()?;
             tauri::tray::TrayIconBuilder::with_id("main")
-                .icon(tray_image(false))
+                .icon(menu_bar_image(false))
+                .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("x-talk · Ready")
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
@@ -667,11 +696,15 @@ pub fn run() {
             crate::updates::install_update,
             crate::commands::open_logs_folder
         ]);
+    // macOS: the default app menu's Quit item calls -[NSApp terminate:], which ends the process
+    // without the Quit flow (recording stop, confirmation). Route Cmd+Q through it instead.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(macos_app_menu);
     let app = builder
         .build(tauri::generate_context!())
         .expect("x-talk could not initialize; inspect local app data and dependencies");
-    app.run(|app, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+    app.run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { api, .. } => {
             let s = app.state::<AppState>();
             if !s.exit_ready.load(Ordering::Acquire) {
                 api.prevent_exit();
@@ -684,5 +717,89 @@ pub fn run() {
             }
             // Never wait for capture here: its tray feedback requires this event loop.
         }
+        tauri::RunEvent::Exit => {
+            // No media decoder may outlive the app (Windows: job objects already ensure it).
+            crate::media::terminate_children();
+            crate::updates::relaunch_if_updated();
+        }
+        // Clicking the Dock icon (or opening the app again in Finder) while the window is
+        // hidden in the menu bar shows it, like a second launch on Windows.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => show(app),
+        _ => {}
     });
+}
+/// The standard macOS app menu (as `tauri::menu::Menu::default`), with Quit as a custom item
+/// handled by the tray menu handler (`"quit"`), so Cmd+Q asks for confirmation like the tray.
+/// Edit items keep copy/paste working in the webview.
+#[cfg(target_os = "macos")]
+fn macos_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{
+        AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID,
+        WINDOW_SUBMENU_ID,
+    };
+    let pkg = app.package_info();
+    let about = AboutMetadata {
+        name: Some(pkg.name.clone()),
+        version: Some(pkg.version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        ..Default::default()
+    };
+    let quit = MenuItem::with_id(app, "quit", "Quit x-talk", true, Some("CmdOrCtrl+Q"))?;
+    let app_menu = Submenu::with_items(
+        app,
+        pkg.name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    let file = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[&PredefinedMenuItem::close_window(app, None)?],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let view = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[&PredefinedMenuItem::fullscreen(app, None)?],
+    )?;
+    let window = Submenu::with_id_and_items(
+        app,
+        WINDOW_SUBMENU_ID,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+    let help = Submenu::with_id_and_items(app, HELP_SUBMENU_ID, "Help", true, &[])?;
+    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window, &help])
 }

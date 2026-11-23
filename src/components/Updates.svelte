@@ -1,6 +1,7 @@
 <script lang="ts">
  import {api,message} from '../ipc';
  import {updateStatus} from '../updates';
+ import {isMac} from '../platform';
  import type {AppState} from '../types';
  import type {SettingsChange} from '../settings';
  let {snapshot,guard,change}:{snapshot:AppState;guard:(action:()=>void|Promise<void>)=>void;change:(update:SettingsChange)=>Promise<void>}=$props();
@@ -23,7 +24,7 @@
  {#if $updateStatus.phase==='current'}<p>You’re up to date.</p>
  {:else if $updateStatus.phase==='available'}<p>Version {$updateStatus.version} is ready.</p>{#if $updateStatus.notes}<details><summary>What’s new</summary><p class="update-notes">{$updateStatus.notes}</p></details>{/if}
  {:else if $updateStatus.phase==='downloading'}<p>Downloading update… {$updateStatus.total?Math.min(100,Math.round($updateStatus.downloaded/$updateStatus.total*100))+'%':Math.round($updateStatus.downloaded/1024)+' KB'}</p>
- {:else if $updateStatus.phase==='installing'}<p>Starting the installer… x-talk will restart.</p>{/if}
+ {:else if $updateStatus.phase==='installing'}<p>{isMac?'Installing the update…':'Starting the installer…'} x-talk will restart.</p>{/if}
  </div>
  {#if error||$updateStatus.error}<p class="error-text" role="alert">{error||$updateStatus.error}</p>{/if}
 </section>

@@ -10,7 +10,7 @@
     "test": "vitest run",
     "tauri": "tauri",
     "desktop:dev": "tauri dev --features desktop",
-    "desktop:ui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-ui.ps1",
+    "desktop:ui": "node scripts/dev-ui.mjs",
     "desktop:build": "node scripts/verify-media.mjs && tauri build --features desktop",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:e2e": "wdio run tests/e2e/wdio.conf.mjs",

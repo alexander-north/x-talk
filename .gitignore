@@ -15,6 +15,10 @@ Thumbs.db
 /src-tauri/target/
 /src-tauri/gen/
 /src-tauri/binaries/*.exe
+# Generated FFmpeg tools (macOS names have no extension); build them with scripts/build-media.sh
+/src-tauri/binaries/ffmpeg
+/src-tauri/binaries/ffprobe
+/src-tauri/binaries/media-build.json
 /src-tauri/binaries/ffmpeg-*
 /src-tauri/binaries/ffprobe-*
 /src-tauri/binaries/THIRD-PARTY-NOTICES.txt

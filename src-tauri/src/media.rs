@@ -71,7 +71,6 @@ impl Ffmpeg {
                 "Bundled media tool could not start. Reinstall x-talk.",
             )
         })?;
-        #[cfg(windows)]
         let _guard = ChildJob::attach(&child)?;
         let stdout = child
             .stdout
@@ -340,6 +339,123 @@ pub fn validate_pcm(path: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// Platform name of a bundled media tool: `ffmpeg.exe` on Windows, `ffmpeg` elsewhere.
+pub fn tool_file_name(tool: &str) -> String {
+    format!("{tool}{}", std::env::consts::EXE_SUFFIX)
+}
+/// Directories searched for system media tools in non-Windows development builds, after PATH.
+/// Covers Homebrew on Apple Silicon and Intel, and Linux distribution packages.
+pub const DEVELOPMENT_TOOL_DIRS: [&str; 3] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
+/// Resolve one media tool. The bundled `<resources>/binaries/<tool>` always wins.
+/// Only when `fallback` is set (debug builds on non-Windows) and the bundled tool is missing,
+/// the first executable `<tool>` in `search` is used, so `brew install ffmpeg` is enough for
+/// development. Without a match the bundled path is returned, and spawning it reports the
+/// "Reinstall x-talk" error.
+pub fn resolve_tool(tool: &str, bundled: &Path, search: &[PathBuf], fallback: bool) -> PathBuf {
+    let name = tool_file_name(tool);
+    let primary = bundled.join(&name);
+    if !fallback || executable(&primary) {
+        return primary;
+    }
+    search
+        .iter()
+        .map(|dir| dir.join(&name))
+        .find(|candidate| executable(candidate))
+        .unwrap_or(primary)
+}
+/// PATH entries followed by [`DEVELOPMENT_TOOL_DIRS`], for [`resolve_tool`].
+pub fn development_search_path() -> Vec<PathBuf> {
+    search_path(std::env::var_os("PATH").as_deref())
+}
+fn search_path(path: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = path
+        .map(|path| std::env::split_paths(path).collect())
+        .unwrap_or_default();
+    dirs.extend(DEVELOPMENT_TOOL_DIRS.iter().map(PathBuf::from));
+    dirs
+}
+fn executable(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Zero-byte placeholders satisfy the Tauri build script but are not tools.
+        meta.is_file() && meta.len() > 0 && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        meta.is_file() && meta.len() > 0
+    }
+}
+
+/// Unix counterpart of the Windows job object: a registry of live media children.
+/// Children stay in the app's process group, so signals sent to the group (terminal Ctrl+C,
+/// `kill -- -<pgid>`) reach them too. `kill_on_drop` covers cancellation and dropped
+/// futures; [`terminate_children`] runs on orderly app exit (Quit, Cmd+Q, logout, update
+/// restart) to SIGKILL any decoder still registered. A SIGKILL of the app itself cannot be
+/// intercepted on macOS; such a child ends at its next write to a closed pipe or when its
+/// bounded job finishes.
+#[cfg(unix)]
+pub struct ChildJob(u32);
+#[cfg(unix)]
+fn live_children() -> &'static std::sync::Mutex<std::collections::HashSet<u32>> {
+    static LIVE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u32>>> =
+        std::sync::OnceLock::new();
+    LIVE.get_or_init(Default::default)
+}
+#[cfg(unix)]
+impl ChildJob {
+    pub fn attach(child: &tokio::process::Child) -> Result<Self> {
+        let pid = child.id().ok_or_else(|| {
+            AppError::new("media", "lifecycle", "Could not supervise media process.")
+        })?;
+        live_children()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(pid);
+        Ok(Self(pid))
+    }
+}
+#[cfg(unix)]
+impl Drop for ChildJob {
+    fn drop(&mut self) {
+        live_children()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+/// Kill every supervised media child. Call once the app is exiting.
+#[cfg(unix)]
+pub fn terminate_children() {
+    terminate_where(|_| true);
+}
+#[cfg(unix)]
+fn terminate_where(filter: impl Fn(u32) -> bool) {
+    let pids: Vec<u32> = {
+        let mut live = live_children().lock().unwrap_or_else(|e| e.into_inner());
+        let pids: Vec<u32> = live.iter().copied().filter(|pid| filter(*pid)).collect();
+        for pid in &pids {
+            live.remove(pid);
+        }
+        pids
+    };
+    for pid in pids {
+        if let Ok(pid) = libc::pid_t::try_from(pid) {
+            // SAFETY: kill(2) has no memory-safety preconditions. A registered pid is a child
+            // of this process that its guard has not released; guards are dropped right after
+            // the child is reaped, so the pid cannot have been reused in between.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+/// Windows children die with the job object when the process exits.
+#[cfg(windows)]
+pub fn terminate_children() {}
 #[cfg(windows)]
 pub struct ChildJob(isize);
 #[cfg(windows)]
@@ -388,5 +504,115 @@ impl Drop for ChildJob {
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0 as _);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[test]
+    fn tool_names_use_the_platform_executable_suffix() {
+        let expected = if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        };
+        assert_eq!(tool_file_name("ffprobe"), expected);
+    }
+    #[test]
+    fn release_resolution_always_uses_the_bundled_tool() {
+        let bundled = Path::new("/nonexistent/binaries");
+        assert_eq!(
+            resolve_tool("ffmpeg", bundled, &[PathBuf::from("/usr/bin")], false),
+            bundled.join(tool_file_name("ffmpeg"))
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn development_resolution_prefers_bundled_then_searches_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundled = dir.path().join("binaries");
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        for d in [&bundled, &first, &second] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let search = [first.clone(), second.clone()];
+        // Nothing executable anywhere: keep the bundled path for the "reinstall" error.
+        assert_eq!(
+            resolve_tool("ffmpeg", &bundled, &search, true),
+            bundled.join("ffmpeg")
+        );
+        // Zero-byte placeholders and non-executable files are skipped.
+        std::fs::write(bundled.join("ffmpeg"), b"").unwrap();
+        std::fs::write(first.join("ffmpeg"), b"data").unwrap();
+        make_executable(&second.join("ffmpeg"));
+        assert_eq!(
+            resolve_tool("ffmpeg", &bundled, &search, true),
+            second.join("ffmpeg")
+        );
+        make_executable(&first.join("ffmpeg"));
+        assert_eq!(
+            resolve_tool("ffmpeg", &bundled, &search, true),
+            first.join("ffmpeg")
+        );
+        make_executable(&bundled.join("ffmpeg"));
+        assert_eq!(
+            resolve_tool("ffmpeg", &bundled, &search, true),
+            bundled.join("ffmpeg")
+        );
+    }
+    #[test]
+    fn development_search_path_puts_path_entries_before_homebrew_and_system_dirs() {
+        let fixed: Vec<PathBuf> = DEVELOPMENT_TOOL_DIRS.iter().map(PathBuf::from).collect();
+        assert_eq!(search_path(None), fixed);
+        let first = std::env::temp_dir().join("first");
+        let second = std::env::temp_dir().join("second");
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        let mut expected = vec![first, second];
+        expected.extend(fixed);
+        assert_eq!(search_path(Some(&path)), expected);
+        assert!(development_search_path().ends_with(&expected[2..]));
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exit_terminates_registered_children_and_released_guards_are_forgotten() {
+        let spawn = || {
+            Command::new("sleep")
+                .arg("30")
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap()
+        };
+        let mut released = spawn();
+        let guard = ChildJob::attach(&released).unwrap();
+        let pid = released.id().unwrap();
+        drop(guard);
+        assert!(!live_children().lock().unwrap().contains(&pid));
+        let mut child = spawn();
+        let _guard = ChildJob::attach(&child).unwrap();
+        let target = child.id().unwrap();
+        // Scoped to this child: other tests may supervise media tools concurrently.
+        terminate_where(|pid| pid == target);
+        assert!(!live_children().lock().unwrap().contains(&target));
+        let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .expect("registered child must exit")
+            .unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        // A released child is never signalled.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), released.wait())
+                .await
+                .is_err()
+        );
+        released.kill().await.unwrap();
     }
 }

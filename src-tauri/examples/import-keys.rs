@@ -26,7 +26,12 @@ fn run() -> x_talk::domain::Result<()> {
         let value = value.trim().trim_matches(['\'', '"']);
         if !value.is_empty() {
             store.set(provider, value)?;
-            println!("Stored {provider} key in Windows Credential Manager.");
+            let destination = if cfg!(target_os = "macos") {
+                "the macOS login keychain"
+            } else {
+                "Windows Credential Manager"
+            };
+            println!("Stored {provider} key in {destination}.");
         }
     }
     Ok(())

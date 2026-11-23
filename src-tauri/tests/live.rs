@@ -109,13 +109,21 @@ async fn transcribe_synthetic() {
     let provider = std::env::var("XTALK_LIVE_PROVIDER").unwrap_or("openai".into());
     let fixture =
         PathBuf::from(std::env::var_os("XTALK_LIVE_AUDIO").expect("XTALK_LIVE_AUDIO required"));
+    let tool = |variable: &str, name: &str| {
+        std::env::var_os(variable)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                x_talk::media::resolve_tool(
+                    name,
+                    &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"),
+                    &x_talk::media::development_search_path(),
+                    !cfg!(windows),
+                )
+            })
+    };
     let ffmpeg = Ffmpeg {
-        ffmpeg: std::env::var_os("XTALK_FFMPEG")
-            .map(PathBuf::from)
-            .unwrap_or("/usr/bin/ffmpeg".into()),
-        ffprobe: std::env::var_os("XTALK_FFPROBE")
-            .map(PathBuf::from)
-            .unwrap_or("/usr/bin/ffprobe".into()),
+        ffmpeg: tool("XTALK_FFMPEG", "ffmpeg"),
+        ffprobe: tool("XTALK_FFPROBE", "ffprobe"),
     };
     let scratch = tempfile::tempdir().unwrap();
     let mut settings = Settings::default();

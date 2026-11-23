@@ -252,12 +252,207 @@ fn stop() {
         windows_sys::Win32::Media::Audio::PlaySoundW(std::ptr::null(), std::ptr::null_mut(), 0);
     }
 }
-#[cfg(not(windows))]
+#[cfg(all(feature = "desktop", not(windows)))]
+fn play(event: &str) -> bool {
+    crate::sounds::asset(event).is_ok_and(output::play)
+}
+#[cfg(all(feature = "desktop", not(windows)))]
+fn stop() {
+    output::stop();
+}
+#[cfg(not(any(windows, feature = "desktop")))]
 fn play(_: &str) -> bool {
     false
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, feature = "desktop")))]
 fn stop() {}
+
+/// Decode an embedded 16-bit mono cue and resample it linearly to the output device rate.
+/// Linear interpolation is adequate for these short synthesized cues.
+#[cfg(any(test, all(feature = "desktop", not(windows))))]
+fn render(wav: &[u8], rate: u32) -> Option<Vec<f32>> {
+    let reader = hound::WavReader::new(std::io::Cursor::new(wav)).ok()?;
+    let spec = reader.spec();
+    if spec.channels != 1
+        || spec.bits_per_sample != 16
+        || spec.sample_format != hound::SampleFormat::Int
+        || spec.sample_rate == 0
+        || rate == 0
+    {
+        return None;
+    }
+    let source: Vec<f32> = reader
+        .into_samples::<i16>()
+        .map(|s| s.map(|v| f32::from(v) / 32768.))
+        .collect::<std::result::Result<_, _>>()
+        .ok()?;
+    if spec.sample_rate == rate || source.is_empty() {
+        return Some(source);
+    }
+    let step = f64::from(spec.sample_rate) / f64::from(rate);
+    let frames = (source.len() as f64 / step).round() as usize;
+    Some(
+        (0..frames)
+            .map(|i| {
+                let at = i as f64 * step;
+                let index = at.floor() as usize;
+                let fraction = (at - index as f64) as f32;
+                let a = source.get(index).copied().unwrap_or(0.);
+                let b = source.get(index + 1).copied().unwrap_or(0.);
+                a + (b - a) * fraction
+            })
+            .collect(),
+    )
+}
+
+/// Asynchronous cue output through cpal (CoreAudio on macOS), mirroring the Windows
+/// `PlaySoundW(SND_ASYNC | SND_MEMORY)` contract: `play` returns at once, a new cue
+/// replaces the one still sounding, and `stop` silences it. One thread owns the stream,
+/// and the output device is open only while a cue sounds.
+#[cfg(all(feature = "desktop", not(windows)))]
+mod output {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, OnceLock,
+    };
+    use std::time::Duration;
+
+    enum Command {
+        Play(&'static [u8]),
+        Stop,
+    }
+    fn sender() -> Option<&'static mpsc::Sender<Command>> {
+        static OUTPUT: OnceLock<Option<mpsc::Sender<Command>>> = OnceLock::new();
+        OUTPUT
+            .get_or_init(|| {
+                let (tx, rx) = mpsc::channel();
+                std::thread::Builder::new()
+                    .name("cue-output".into())
+                    .spawn(move || run(rx))
+                    .ok()
+                    .map(|_| tx)
+            })
+            .as_ref()
+    }
+    pub(super) fn play(wav: &'static [u8]) -> bool {
+        sender().is_some_and(|tx| tx.send(Command::Play(wav)).is_ok())
+    }
+    pub(super) fn stop() {
+        if let Some(tx) = sender() {
+            let _ = tx.send(Command::Stop);
+        }
+    }
+    fn run(rx: mpsc::Receiver<Command>) {
+        let mut current: Option<(cpal::Stream, Arc<AtomicBool>)> = None;
+        loop {
+            let command = if current.is_some() {
+                match rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(command) => Some(command),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                match rx.recv() {
+                    Ok(command) => Some(command),
+                    Err(_) => break,
+                }
+            };
+            match command {
+                Some(Command::Stop) => current = None,
+                Some(Command::Play(wav)) => {
+                    // Interrupt first, so a failed open never leaves the previous cue sounding.
+                    current = None;
+                    match open(wav) {
+                        Ok(stream) => current = Some(stream),
+                        Err(reason) => tracing::warn!(reason, "cue_output_failed"),
+                    }
+                }
+                None => {}
+            }
+            if current
+                .as_ref()
+                .is_some_and(|(_, done)| done.load(Ordering::Acquire))
+            {
+                current = None;
+            }
+        }
+    }
+    fn open(wav: &'static [u8]) -> Result<(cpal::Stream, Arc<AtomicBool>), &'static str> {
+        let device = cpal::default_host()
+            .default_output_device()
+            .ok_or("no_output_device")?;
+        // Use the device's current format: requesting another rate could change the
+        // hardware rate for every application on macOS.
+        let config = device
+            .default_output_config()
+            .map_err(|_| "output_format_unavailable")?;
+        let samples = super::render(wav, config.sample_rate()).ok_or("cue_decode_failed")?;
+        let channels = usize::from(config.channels().max(1));
+        // Keep the stream open briefly after the last sample so the device drains it.
+        let tail = config.sample_rate() as usize / 10;
+        let done = Arc::new(AtomicBool::new(false));
+        let stream_config: cpal::StreamConfig = config.clone().into();
+        let voice = Voice {
+            samples,
+            channels,
+            tail,
+            done: done.clone(),
+        };
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => build::<f32>(&device, &stream_config, voice),
+            cpal::SampleFormat::I16 => build::<i16>(&device, &stream_config, voice),
+            cpal::SampleFormat::U16 => build::<u16>(&device, &stream_config, voice),
+            cpal::SampleFormat::I32 => build::<i32>(&device, &stream_config, voice),
+            _ => return Err("output_format_unsupported"),
+        }?;
+        stream.play().map_err(|_| "output_start_failed")?;
+        Ok((stream, done))
+    }
+    struct Voice {
+        samples: Vec<f32>,
+        channels: usize,
+        tail: usize,
+        done: Arc<AtomicBool>,
+    }
+    fn build<T>(
+        device: &cpal::Device,
+        config: &cpal::StreamConfig,
+        voice: Voice,
+    ) -> Result<cpal::Stream, &'static str>
+    where
+        T: cpal::SizedSample + cpal::FromSample<f32>,
+    {
+        let Voice {
+            samples,
+            channels,
+            tail,
+            done,
+        } = voice;
+        let failed = done.clone();
+        let end = samples.len() + tail;
+        let mut position = 0usize;
+        device
+            .build_output_stream(
+                config,
+                move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                    for frame in data.chunks_mut(channels) {
+                        let value = samples.get(position).copied().unwrap_or(0.);
+                        position = position.saturating_add(1);
+                        for sample in frame {
+                            *sample = T::from_sample(value);
+                        }
+                    }
+                    if position >= end {
+                        done.store(true, Ordering::Release);
+                    }
+                },
+                move |_| failed.store(true, Ordering::Release),
+                None,
+            )
+            .map_err(|_| "output_open_failed")
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -347,6 +542,27 @@ mod tests {
             },
             "failed"
         ));
+    }
+    #[test]
+    fn rendering_preserves_duration_and_level_at_common_device_rates() {
+        for event in ["started", "failed"] {
+            let wav = crate::sounds::asset(event).unwrap();
+            let native = render(wav, 48000).unwrap();
+            assert_eq!(
+                native.len() as u64 * 1000 / 48000,
+                duration(event).as_millis() as u64
+            );
+            let peak = |s: &[f32]| s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            for rate in [44100, 96000, 16000] {
+                let resampled = render(wav, rate).unwrap();
+                let expected = native.len() as f64 * f64::from(rate) / 48000.;
+                assert!((resampled.len() as f64 - expected).abs() <= 1.);
+                assert!(peak(&resampled) <= peak(&native) + f32::EPSILON);
+                assert!(peak(&resampled) > peak(&native) * 0.8);
+            }
+        }
+        assert!(render(b"not a wav", 48000).is_none());
+        assert!(render(crate::sounds::asset("started").unwrap(), 0).is_none());
     }
     #[test]
     fn timing_matches_embedded_audio() {

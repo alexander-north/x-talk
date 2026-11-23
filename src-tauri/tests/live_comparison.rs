@@ -76,9 +76,20 @@ fn compare_elevenlabs() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let provider = runtime.block_on(async { Providers::new(keys.clone()).unwrap() });
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let search = x_talk::media::development_search_path();
     let media = Ffmpeg {
-        ffmpeg: root.join("binaries/ffmpeg.exe"),
-        ffprobe: root.join("binaries/ffprobe.exe"),
+        ffmpeg: x_talk::media::resolve_tool(
+            "ffmpeg",
+            &root.join("binaries"),
+            &search,
+            !cfg!(windows),
+        ),
+        ffprobe: x_talk::media::resolve_tool(
+            "ffprobe",
+            &root.join("binaries"),
+            &search,
+            !cfg!(windows),
+        ),
     };
     let config = Transcription {
         provider: "elevenlabs".into(),

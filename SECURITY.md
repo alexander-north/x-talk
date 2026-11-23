@@ -6,4 +6,4 @@ https://github.com/alexander-north/x-talk/security/advisories/new
 
 Private vulnerability reporting is enabled. If that button is unavailable, open a minimal issue requesting a private contact route without describing the vulnerability or including exploit details, credentials, recordings, or transcripts.
 
-Include the affected version/build, reproduction steps, impact, and a minimal non-sensitive example. Do not submit other people's data. Maintainers respond as availability permits; no response-time guarantee is offered. Fixes target the latest release; older versions do not have separate maintenance branches.
+Include the affected version/build and operating system, reproduction steps, impact, and a minimal non-sensitive example. Do not submit other people's data. Maintainers respond as availability permits; no response-time guarantee is offered. Fixes target the latest release; older versions do not have separate maintenance branches.

@@ -31,7 +31,8 @@
           { "context": "prepare", "integration_id": 15368 },
           { "context": "media", "integration_id": 15368 },
           { "context": "windows", "integration_id": 15368 },
-          { "context": "desktop", "integration_id": 15368 }
+          { "context": "desktop", "integration_id": 15368 },
+          { "context": "macos", "integration_id": 15368 }
         ]
       }
     }
